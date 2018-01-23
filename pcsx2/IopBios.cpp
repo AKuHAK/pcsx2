@@ -28,6 +28,24 @@
 // set this to 0 to disable rewriting 'host:' paths!
 #define USE_HOST_REWRITE 1
 
+typedef struct {
+    unsigned int mode;
+    unsigned int attr;
+    unsigned int size;
+    unsigned char ctime[8];
+    unsigned char atime[8];
+    unsigned char mtime[8];
+    unsigned int hisize;
+} fio_stat_t;
+
+typedef struct {
+    fio_stat_t stat;
+    char name[256];
+    unsigned int unknown;
+} fio_dirent_t;
+
+#define FIO_SO_IFDIR        0x0020
+
 #if USE_HOST_REWRITE
 #	ifdef _WIN32
 		// disable this if you DON'T want "host:/usr/local/" paths
@@ -233,6 +251,103 @@ public:
 	{
 		return translate_error(::write(fd, buf, count));
 	}
+};
+
+class HostDir : public IOManDir
+{
+public:
+    HANDLE fh;
+    HANDLE fffh;
+
+    HostDir(HANDLE hostfh)
+    {
+        fh = hostfh;
+        fffh = NULL;
+    }
+    
+    virtual ~HostDir() = default;
+
+    static __fi int translate_error(int err)
+    {
+        if (err >= 0)
+            return err;
+
+        switch (err)
+        {
+        case (int)INVALID_HANDLE_VALUE:
+            return -IOP_EIO;
+        default:
+            return -IOP_EIO;
+        }
+    }
+
+    static int open(IOManDir **dir, const std::string &full_path)
+    {
+        const std::string path = full_path.substr(full_path.find(':') + 1);
+
+        // opendir()? dirfd()? open(O_DIRECTORY)?
+        HANDLE hostfh = CreateFileA(
+            host_path(path).data(),
+            FILE_LIST_DIRECTORY,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            NULL,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
+            NULL
+            );
+
+        if (hostfh == INVALID_HANDLE_VALUE)
+            return translate_error((int)hostfh);
+
+        *dir = new HostDir(hostfh);
+        if (!*dir)
+            return -IOP_ENOMEM;
+
+        return 0;
+    }
+
+    virtual int read(void *buf)
+    {
+        char dirPath[MAX_PATH];
+        WIN32_FIND_DATAA ffd;
+        BOOL result = true;
+
+        GetFinalPathNameByHandleA(fh, dirPath, MAX_PATH, NULL);
+        strcat(dirPath, "\\*");
+
+        if (!fffh)
+        {
+            fffh = FindFirstFileA(dirPath, &ffd);
+        }
+        else
+        {
+            result = FindNextFileA(fffh, &ffd);
+        }
+
+        if (result)
+        {
+            fio_dirent_t hostcontent;
+
+            strcpy(hostcontent.name, ffd.cFileName);
+
+            hostcontent.stat.size = ffd.nFileSizeLow;
+            hostcontent.stat.hisize = ffd.nFileSizeHigh;
+            hostcontent.stat.mode = (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? FIO_SO_IFDIR : 0;
+
+            memcpy(hostcontent.stat.ctime, &ffd.ftCreationTime, 8);
+            memcpy(hostcontent.stat.mtime, &ffd.ftLastWriteTime, 8);
+
+            memcpy(buf, &hostcontent, sizeof(fio_dirent_t));
+        }
+
+        return result;
+    }
+
+    virtual void close()
+    {
+        ::CloseHandle(fh);
+        delete this;
+    }
 };
 
 namespace ioman {
@@ -470,6 +585,75 @@ namespace ioman {
 
 		return 0;
 	}
+
+    int mkdir_HLE()
+    {
+        const std::string full_path = Ra0;
+        const std::string path = full_path.substr(full_path.find(':') + 1);
+
+        ::mkdir(host_path(path).data());
+
+        v0 = 0;
+        pc = ra;
+        return 1;
+    }
+
+    int dopen_HLE()
+    {
+        IOManDir *dir = NULL;
+        const std::string path = Ra0;
+
+        int err = HostDir::open(&dir, path);
+
+        if (err != 0 || !dir)
+        {
+            if (err == 0)
+                err = -IOP_EIO;
+            if (dir)
+                dir->close();
+            v0 = err;
+        }
+        else
+        {
+            v0 = allocfd(dir);
+            if ((s32)v0 < 0)
+                dir->close();
+        }
+
+        pc = ra;
+        return 1;
+    }
+
+    int dread_HLE()
+    {
+        s32 fh = a0;
+        u32 data = a1;
+
+        if (IOManDir *dir = getfd<IOManDir>(fh))
+        {
+            std::unique_ptr<char[]> buf(new char[sizeof(fio_dirent_t)]);
+            int result;
+            
+            result = dir->read(buf.get());
+
+            v0 = sizeof(fio_dirent_t);
+
+            for (s32 i = 0; i < (s32)v0; i++)
+                iopMemWrite8(data + i, buf[i]);
+
+            if (result)
+                // tell handler more items are left to process
+                v0 = 1;
+            else
+                // tell handler no more items are left to process
+                v0 = 0;
+
+            pc = ra;
+            return 1;
+        }
+
+		return 0;
+	}
 }
 
 namespace sysmem {
@@ -666,6 +850,9 @@ irxHLE irxImportHLE(const std::string &libname, u16 index)
 		EXPORT_H(  6, read)
 		EXPORT_H(  7, write)
 		EXPORT_H(  8, lseek)
+		EXPORT_H( 11, mkdir)
+		EXPORT_H( 13, dopen)
+		EXPORT_H( 15, dread)
 	END_MODULE
 
 	return 0;
