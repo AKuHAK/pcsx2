@@ -632,21 +632,11 @@ namespace ioman {
         if (IOManDir *dir = getfd<IOManDir>(fh))
         {
             std::unique_ptr<char[]> buf(new char[sizeof(fio_dirent_t)]);
-            int result;
             
-            result = dir->read(buf.get());
+            v0 = dir->read(buf.get());
 
-            v0 = sizeof(fio_dirent_t);
-
-            for (s32 i = 0; i < (s32)v0; i++)
+            for (s32 i = 0; i < (s32)sizeof(fio_dirent_t); i++)
                 iopMemWrite8(data + i, buf[i]);
-
-            if (result)
-                // tell handler more items are left to process
-                v0 = 1;
-            else
-                // tell handler no more items are left to process
-                v0 = 0;
 
             pc = ra;
             return 1;
