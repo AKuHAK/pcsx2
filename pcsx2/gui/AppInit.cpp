@@ -508,7 +508,6 @@ bool Pcsx2App::OnInit()
 			if (Startup.CdvdSource == CDVD_SourceType::Iso)
 				SysUpdateIsoSrcFile(Startup.IsoFile);
 			sApp.SysExecute(Startup.CdvdSource);
-			g_Conf->CurrentGameArgs = Startup.GameLaunchArgs;
 		}
 		else if (Startup.SysAutoRunElf)
 		{
@@ -525,6 +524,8 @@ bool Pcsx2App::OnInit()
 			// FIXME: ElfFile is an irx it will crash
 			sApp.SysExecute(Startup.CdvdSource, Startup.ElfFile);
 		}
+		
+		g_Conf->CurrentGameArgs = Startup.GameLaunchArgs;
 	}
 	// ----------------------------------------------------------------------------
 	catch (Exception::StartupAborted& ex) // user-aborted, no popups needed.
