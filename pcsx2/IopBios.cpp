@@ -278,8 +278,6 @@ public:
 				return -IOP_ENOENT;
 			case -EACCES:
 				return -IOP_EACCES;
-			case -ENOTDIR:
-				return -IOP_NOTDIR;
 			case -EIO:
 			default:
 				return -IOP_EIO;
@@ -606,8 +604,12 @@ namespace ioman {
 	{
 		const std::string full_path = Ra0;
 		const std::string path = full_path.substr(full_path.find(':') + 1);
-
-		::mkdir(host_path(path).data());
+#		ifdef _WIN32
+			::mkdir(host_path(path).data());
+#		else
+			mode_t mode = 0666;
+			::mkdir(host_path(path).data(), mode);
+#		endif
 
 		v0 = 0;
 		pc = ra;
