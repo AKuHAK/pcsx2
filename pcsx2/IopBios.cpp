@@ -29,22 +29,22 @@
 #define USE_HOST_REWRITE 1
 
 typedef struct {
-    unsigned int mode;
-    unsigned int attr;
-    unsigned int size;
-    unsigned char ctime[8];
-    unsigned char atime[8];
-    unsigned char mtime[8];
-    unsigned int hisize;
+	unsigned int mode;
+	unsigned int attr;
+	unsigned int size;
+	unsigned char ctime[8];
+	unsigned char atime[8];
+	unsigned char mtime[8];
+	unsigned int hisize;
 } fio_stat_t;
 
 typedef struct {
-    fio_stat_t stat;
-    char name[256];
-    unsigned int unknown;
+	fio_stat_t stat;
+	char name[256];
+	unsigned int unknown;
 } fio_dirent_t;
 
-#define FIO_SO_IFDIR        0x0020
+#define FIO_SO_IFDIR		0x0020
 
 #if USE_HOST_REWRITE
 #	ifdef _WIN32
@@ -256,98 +256,110 @@ public:
 class HostDir : public IOManDir
 {
 public:
-    HANDLE fh;
-    HANDLE fffh;
+	int fh;
+	int fffh;
 
-    HostDir(HANDLE hostfh)
-    {
-        fh = hostfh;
-        fffh = NULL;
-    }
-    
-    virtual ~HostDir() = default;
+	HostDir(int hostfh)
+	{
+		fh = hostfh;
+		fffh = NULL;
+	}
+	
+	virtual ~HostDir() = default;
 
-    static __fi int translate_error(int err)
-    {
-        if (err >= 0)
-            return err;
+	static __fi int translate_error(int err)
+	{
+		if (err >= 0)
+			return err;
 
-        switch (err)
-        {
-        case (int)INVALID_HANDLE_VALUE:
-            return -IOP_EIO;
-        default:
-            return -IOP_EIO;
-        }
-    }
+		switch (err)
+		{
+			case -ENOENT:
+				return -IOP_ENOENT;
+			case -EACCES:
+				return -IOP_EACCES;
+			case -ENOTDIR:
+				return -IOP_NOTDIR;
+			case -EIO:
+			default:
+				return -IOP_EIO;
+		}
+	}
 
-    static int open(IOManDir **dir, const std::string &full_path)
-    {
-        const std::string path = full_path.substr(full_path.find(':') + 1);
+	static int open(IOManDir **dir, const std::string &full_path)
+	{
+		const std::string path = full_path.substr(full_path.find(':') + 1);
 
-        // opendir()? dirfd()? open(O_DIRECTORY)?
-        HANDLE hostfh = CreateFileA(
-            host_path(path).data(),
-            FILE_LIST_DIRECTORY,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            NULL,
-            OPEN_EXISTING,
-            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
-            NULL
-            );
+		// opendir()? dirfd()? open(O_DIRECTORY)?
+		// int hostfh = CreateFileA(
+			// host_path(path).data(),
+			// FILE_LIST_DIRECTORY,
+			// FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+			// NULL,
+			// OPEN_EXISTING,
+			// FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
+			// NULL
+			// );
+		int hostfh = ::opendir(host_path(path).data());
 
-        if (hostfh == INVALID_HANDLE_VALUE)
-            return translate_error((int)hostfh);
+		if (hostfh < 0)
+			// return translate_error(hostfh);
+			return -IOP_ENOMEM;
 
-        *dir = new HostDir(hostfh);
-        if (!*dir)
-            return -IOP_ENOMEM;
+		*dir = new HostDir(hostfh);
+		if (!*dir)
+			return -IOP_EIO;
 
-        return 0;
-    }
+		return 0;
+	}
 
-    virtual int read(void *buf)
-    {
-        char dirPath[MAX_PATH];
-        WIN32_FIND_DATAA ffd;
-        BOOL result = true;
+	virtual int read(void *buf)
+	{
+		return translate_error(::readdir(buf));
+	}
 
-        GetFinalPathNameByHandleA(fh, dirPath, MAX_PATH, NULL);
-        strcat(dirPath, "\\*");
+	// virtual int read(void *buf)
+	// {
+		// char dirPath[MAX_PATH];
+		// WIN32_FIND_DATAA ffd;
+		// BOOL result = true;
 
-        if (!fffh)
-        {
-            fffh = FindFirstFileA(dirPath, &ffd);
-        }
-        else
-        {
-            result = FindNextFileA(fffh, &ffd);
-        }
+		// GetFinalPathNameByHandleA(fh, dirPath, MAX_PATH, NULL);
+		// strcat(dirPath, "\\*");
 
-        if (result)
-        {
-            fio_dirent_t hostcontent;
+		// if (!fffh)
+		// {
+			// fffh = FindFirstFileA(dirPath, &ffd);
+		// }
+		// else
+		// {
+			// result = FindNextFileA(fffh, &ffd);
+		// }
 
-            strcpy(hostcontent.name, ffd.cFileName);
+		// if (result)
+		// {
+			// fio_dirent_t hostcontent;
 
-            hostcontent.stat.size = ffd.nFileSizeLow;
-            hostcontent.stat.hisize = ffd.nFileSizeHigh;
-            hostcontent.stat.mode = (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? FIO_SO_IFDIR : 0;
+			// strcpy(hostcontent.name, ffd.cFileName);
 
-            memcpy(hostcontent.stat.ctime, &ffd.ftCreationTime, 8);
-            memcpy(hostcontent.stat.mtime, &ffd.ftLastWriteTime, 8);
+			// hostcontent.stat.size = ffd.nFileSizeLow;
+			// hostcontent.stat.hisize = ffd.nFileSizeHigh;
+			// hostcontent.stat.mode = (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? FIO_SO_IFDIR : 0;
 
-            memcpy(buf, &hostcontent, sizeof(fio_dirent_t));
-        }
+			// memcpy(hostcontent.stat.ctime, &ffd.ftCreationTime, 8);
+			// memcpy(hostcontent.stat.mtime, &ffd.ftLastWriteTime, 8);
 
-        return result;
-    }
+			// memcpy(buf, &hostcontent, sizeof(fio_dirent_t));
+		// }
 
-    virtual void close()
-    {
-        ::CloseHandle(fh);
-        delete this;
-    }
+		// return result;
+	// }
+
+	virtual void close()
+	{
+		::closedir(fh);
+		delete this;
+	}
 };
 
 namespace ioman {
@@ -590,61 +602,61 @@ namespace ioman {
 		return 0;
 	}
 
-    int mkdir_HLE()
-    {
-        const std::string full_path = Ra0;
-        const std::string path = full_path.substr(full_path.find(':') + 1);
+	int mkdir_HLE()
+	{
+		const std::string full_path = Ra0;
+		const std::string path = full_path.substr(full_path.find(':') + 1);
 
-        ::mkdir(host_path(path).data());
+		::mkdir(host_path(path).data());
 
-        v0 = 0;
-        pc = ra;
-        return 1;
-    }
+		v0 = 0;
+		pc = ra;
+		return 1;
+	}
 
-    int dopen_HLE()
-    {
-        IOManDir *dir = NULL;
-        const std::string path = Ra0;
+	int dopen_HLE()
+	{
+		IOManDir *dir = NULL;
+		const std::string path = Ra0;
 
-        int err = HostDir::open(&dir, path);
+		int err = HostDir::open(&dir, path);
 
-        if (err != 0 || !dir)
-        {
-            if (err == 0)
-                err = -IOP_EIO;
-            if (dir)
-                dir->close();
-            v0 = err;
-        }
-        else
-        {
-            v0 = allocfd(dir);
-            if ((s32)v0 < 0)
-                dir->close();
-        }
+		if (err != 0 || !dir)
+		{
+			if (err == 0)
+				err = -IOP_EIO;
+			if (dir)
+				dir->close();
+			v0 = err;
+		}
+		else
+		{
+			v0 = allocfd(dir);
+			if ((s32)v0 < 0)
+				dir->close();
+		}
 
-        pc = ra;
-        return 1;
-    }
+		pc = ra;
+		return 1;
+	}
 
-    int dread_HLE()
-    {
-        s32 fh = a0;
-        u32 data = a1;
+	int dread_HLE()
+	{
+		s32 fh = a0;
+		u32 data = a1;
 
-        if (IOManDir *dir = getfd<IOManDir>(fh))
-        {
-            std::unique_ptr<char[]> buf(new char[sizeof(fio_dirent_t)]);
-            
-            v0 = dir->read(buf.get());
+		if (IOManDir *dir = getfd<IOManDir>(fh))
+		{
+			std::unique_ptr<char[]> buf(new char[sizeof(fio_dirent_t)]);
+			
+			v0 = dir->read(buf.get());
 
-            for (s32 i = 0; i < (s32)sizeof(fio_dirent_t); i++)
-                iopMemWrite8(data + i, buf[i]);
+			for (s32 i = 0; i < (s32)sizeof(fio_dirent_t); i++)
+				iopMemWrite8(data + i, buf[i]);
 
-            pc = ra;
-            return 1;
-        }
+			pc = ra;
+			return 1;
+		}
 
 		return 0;
 	}
@@ -766,22 +778,22 @@ namespace loadcore {
 
 namespace intrman {
 	static const char* intrname[] = {
-		"INT_VBLANK",   "INT_GM",       "INT_CDROM",   "INT_DMA",		//00
-		"INT_RTC0",     "INT_RTC1",     "INT_RTC2",    "INT_SIO0",		//04
-		"INT_SIO1",     "INT_SPU",      "INT_PIO",     "INT_EVBLANK",	//08
-		"INT_DVD",      "INT_PCMCIA",   "INT_RTC3",    "INT_RTC4",		//0C
-		"INT_RTC5",     "INT_SIO2",     "INT_HTR0",    "INT_HTR1",		//10
-		"INT_HTR2",     "INT_HTR3",     "INT_USB",     "INT_EXTR",		//14
-		"INT_FWRE",     "INT_FDMA",     "INT_1A",      "INT_1B",		//18
-		"INT_1C",       "INT_1D",       "INT_1E",      "INT_1F",		//1C
+		"INT_VBLANK",   "INT_GM",	   "INT_CDROM",   "INT_DMA",		//00
+		"INT_RTC0",	 "INT_RTC1",	 "INT_RTC2",	"INT_SIO0",		//04
+		"INT_SIO1",	 "INT_SPU",	  "INT_PIO",	 "INT_EVBLANK",	//08
+		"INT_DVD",	  "INT_PCMCIA",   "INT_RTC3",	"INT_RTC4",		//0C
+		"INT_RTC5",	 "INT_SIO2",	 "INT_HTR0",	"INT_HTR1",		//10
+		"INT_HTR2",	 "INT_HTR3",	 "INT_USB",	 "INT_EXTR",		//14
+		"INT_FWRE",	 "INT_FDMA",	 "INT_1A",	  "INT_1B",		//18
+		"INT_1C",	   "INT_1D",	   "INT_1E",	  "INT_1F",		//1C
 		"INT_dmaMDECi", "INT_dmaMDECo", "INT_dmaGPU",  "INT_dmaCD",		//20
 		"INT_dmaSPU",   "INT_dmaPIO",   "INT_dmaOTC",  "INT_dmaBERR",	//24
-		"INT_dmaSPU2",  "INT_dma8",     "INT_dmaSIF0", "INT_dmaSIF1",	//28
-		"INT_dmaSIO2i", "INT_dmaSIO2o", "INT_2E",      "INT_2F",		//2C
-		"INT_30",       "INT_31",       "INT_32",      "INT_33",		//30
-		"INT_34",       "INT_35",       "INT_36",      "INT_37",		//34
-		"INT_38",       "INT_39",       "INT_3A",      "INT_3B",		//38
-		"INT_3C",       "INT_3D",       "INT_3E",      "INT_3F",		//3C
+		"INT_dmaSPU2",  "INT_dma8",	 "INT_dmaSIF0", "INT_dmaSIF1",	//28
+		"INT_dmaSIO2i", "INT_dmaSIO2o", "INT_2E",	  "INT_2F",		//2C
+		"INT_30",	   "INT_31",	   "INT_32",	  "INT_33",		//30
+		"INT_34",	   "INT_35",	   "INT_36",	  "INT_37",		//34
+		"INT_38",	   "INT_39",	   "INT_3A",	  "INT_3B",		//38
+		"INT_3C",	   "INT_3D",	   "INT_3E",	  "INT_3F",		//3C
 		"INT_MAX"														//40
 	};
 
