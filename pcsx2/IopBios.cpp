@@ -262,7 +262,7 @@ public:
 	HostDir(int hostfh)
 	{
 		fh = hostfh;
-		fffh = NULL;
+		fffh = 0;
 	}
 	
 	virtual ~HostDir() = default;
@@ -313,7 +313,7 @@ public:
 
 	virtual int read(void *buf)
 	{
-		return translate_error(::readdir(buf));
+		return translate_error(::readdir(fh));
 	}
 
 	// virtual int read(void *buf)
