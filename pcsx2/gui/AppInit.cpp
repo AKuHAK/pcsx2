@@ -515,6 +515,8 @@ bool Pcsx2App::OnInit()
 			g_Conf->EmuOptions.UseBOOT2Injection = true;
 
 			sApp.SysExecute(Startup.CdvdSource, Startup.ElfFile);
+			if (strchr(Startup.ElfFile, ' ') != NULL)
+				g_Conf->CurrentGameArgs = Startup.GameLaunchArgs;
 		}
 		else if (Startup.SysAutoRunIrx)
 		{
@@ -524,6 +526,8 @@ bool Pcsx2App::OnInit()
 
 			// FIXME: ElfFile is an irx it will crash
 			sApp.SysExecute(Startup.CdvdSource, Startup.ElfFile);
+			if (strchr(Startup.ElfFile, ' ') != NULL)
+				g_Conf->CurrentGameArgs = Startup.GameLaunchArgs;
 		}
 	}
 	// ----------------------------------------------------------------------------
