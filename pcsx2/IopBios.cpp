@@ -260,7 +260,7 @@ namespace R3000A
 			return translate_error(err);
 		}
 
-		virtual int read(void* buf, u32 count)
+		virtual int read(void* buf, u32 count) /* Flawfinder: ignore */
 		{
 			return translate_error(::read(fd, buf, count));
 		}
@@ -300,7 +300,7 @@ namespace R3000A
 			return 0;
 		}
 
-		virtual int read(void* buf)
+		virtual int read(void* buf) /* Flawfinder: ignore */
 		{
 			fio_dirent_t* hostcontent = (fio_dirent_t*)buf;
 			if (dir == ghc::filesystem::end(dir))
@@ -309,7 +309,7 @@ namespace R3000A
 			strcpy(hostcontent->name, dir->path().filename().c_str());
 			host_stat(host_path(dir->path()), &hostcontent->stat);
 
-			std::next(dir);
+            static_cast<void>(std::next(dir)); /* This is for avoid warning of non used return value */
 			return 1;
 		}
 
@@ -552,7 +552,7 @@ namespace R3000A
 			if (IOManDir* dir = getfd<IOManDir>(fh))
 			{
 				char buf[sizeof(fio_dirent_t)];
-				v0 = dir->read(&buf);
+				v0 = dir->read(&buf); /* Flawfinder: ignore */
 
 				for (s32 i = 0; i < (s32)sizeof(fio_dirent_t); i++)
 					iopMemWrite8(data + i, buf[i]);
