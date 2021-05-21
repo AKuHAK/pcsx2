@@ -106,3 +106,19 @@ jobs:
       - name: Build PCSX2
         working-directory: ./build
         run: ../.github/workflows/scripts/linux/compile.sh
+
+      - name: Prepare Artifact Metadata
+        id: artifact-metadata
+        run: echo "::set-output name=sha8::$(echo ${GITHUB_SHA} | cut -c1-8)"
+
+      - name: Prepare Artifact Folder
+        working-directory: ./build/pcsx2
+        run: |
+          tar -zcvf pcsx2.tar.gz PCSX2
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: PCSX2-${{matrix.os}}-sha[${{ steps.artifact-metadata.outputs.sha8 }}]
+          path: build/pcsx2/pcsx2.tar.gz
+          retention-days: 30 # https://docs.github.com/en/free-pro-team@latest/actions/reference/usage-limits-billing-and-administration#artifact-and-log-retention-policy
