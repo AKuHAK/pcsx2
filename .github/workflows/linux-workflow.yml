@@ -112,9 +112,8 @@ jobs:
         run: echo "::set-output name=sha8::$(echo ${GITHUB_SHA} | cut -c1-8)"
 
       - name: Prepare Artifact Folder
-        working-directory: ./pcsx2
         run: |
-          tar -zcvf pcsx2.tar.gz bin
+          tar -zcvf pcsx2.tar.gz pcsx2
 
       - name: Upload artifact
         uses: actions/upload-artifact@v2
