@@ -119,5 +119,5 @@ jobs:
         uses: actions/upload-artifact@v2
         with:
           name: PCSX2-${{matrix.os}}-${{ matrix.platform }}-${{ matrix.compiler }}-sha[${{ steps.artifact-metadata.outputs.sha8 }}]
-          path: build/pcsx2.tar.gz
+          path: pcsx2.tar.gz
           retention-days: 30 # https://docs.github.com/en/free-pro-team@latest/actions/reference/usage-limits-billing-and-administration#artifact-and-log-retention-policy
