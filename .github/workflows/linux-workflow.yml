@@ -134,10 +134,8 @@ jobs:
 
       - name: Prepare Artifact Folder
         run: |
-          find .
-          mkdir -p ${{ steps.artifact-metadata.outputs.name }}/PCSX2
-          cp -rf bin/* ${{ steps.artifact-metadata.outputs.name }}/PCSX2/
-          tar -zcvf pcsx2.tar.gz ${{ steps.artifact-metadata.outputs.name }}/PCSX2
+          cp -rf bin ${{ steps.artifact-metadata.outputs.name }}
+          tar -zcvf pcsx2.tar.gz ${{ steps.artifact-metadata.outputs.name }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v2
