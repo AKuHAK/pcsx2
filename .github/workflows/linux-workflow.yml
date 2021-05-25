@@ -113,7 +113,7 @@ jobs:
 
       - name: Prepare Artifact Folder
         run: |
-          ls -l
+          find .
           tar -zcvf pcsx2.tar.gz /home/runner/work/pcsx2/pcsx2/bin
 
       - name: Upload artifact
