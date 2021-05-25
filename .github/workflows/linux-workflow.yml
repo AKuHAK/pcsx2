@@ -109,7 +109,7 @@ jobs:
 
       - name: Prepare Artifact Metadata
         id: artifact-metadata
-        run: echo "::set-output name=sha8::$(echo ${GITHUB_SHA} | cut -c1-8)"
+        run: |
           ARCH=${{ matrix.os }}-${{ matrix.platform }}-${{ matrix.compiler }}${{ matrix.detail }}
           ARTIFACT_NAME=""
           if [ ${{ github.event_name }} == "pull_request" ]; then
