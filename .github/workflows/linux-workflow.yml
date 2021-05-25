@@ -134,7 +134,7 @@ jobs:
 
       - name: Prepare Artifact Folder
         run: |
-          cp -rf bin ${{ steps.artifact-metadata.outputs.name }}
+          mv bin ${{ steps.artifact-metadata.outputs.name }}
           tar -zcvf pcsx2.tar.gz ${{ steps.artifact-metadata.outputs.name }}
 
       - name: Upload artifact
