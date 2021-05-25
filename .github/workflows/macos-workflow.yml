@@ -95,13 +95,14 @@ jobs:
           echo "##[set-output name=name;]${TRIMMED_ARTIFACT_NAME}"
 
       - name: Prepare Artifact Folder
-        working-directory: ./build/pcsx2
+        working-directory: ./build
         run: |
-          tar -zcvf pcsx2.tar.gz PCSX2.app
+          mv pcsx2 ${{ steps.artifact-metadata.outputs.name }}
+          tar -zcvf pcsx2.tar.gz ${{ steps.artifact-metadata.outputs.name }}/PCSX2.app
 
       - name: Upload artifact
         uses: actions/upload-artifact@v2
         with:
           name: ${{ steps.artifact-metadata.outputs.name }}
-          path: build/pcsx2/pcsx2.tar.gz
+          path: build/pcsx2.tar.gz
           retention-days: 30 # https://docs.github.com/en/free-pro-team@latest/actions/reference/usage-limits-billing-and-administration#artifact-and-log-retention-policy
