@@ -76,6 +76,7 @@ jobs:
       - name: Prepare Artifact Folder
         working-directory: ./build/pcsx2
         run: |
+          find .
           tar -zcvf pcsx2.tar.gz PCSX2.app
 
       - name: Upload artifact
