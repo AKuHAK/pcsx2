@@ -30,7 +30,6 @@
 using namespace Threading;
 
 MutexRecursive mtx_SPU2Status;
-bool SPU2_dummy_callback = false;
 
 #include "svnrev.h"
 
@@ -48,30 +47,8 @@ u32* cyclePtr = nullptr;
 u32 lClocks = 0;
 //static bool cpu_detected = false;
 
-static bool CheckSSE()
-{
-	return true;
-
-#if 0
-	if( !cpu_detected )
-	{
-		cpudetectInit();
-		cpu_detected = true;
-	}
-	if( !x86caps.hasStreamingSIMDExtensions || !x86caps.hasStreamingSIMD2Extensions )
-	{
-		SysMessage( "Your CPU does not support SSE2 instructions.\nThe SPU2 plugin requires SSE2 to run." );
-		return false;
-	}
-	return true;
-#endif
-}
-
 void SPU2configure()
 {
-	if (!CheckSSE())
-		return;
-
 	ScopedCoreThreadPause paused_core;
 	configure();
 	paused_core.AllowResume();
@@ -82,15 +59,6 @@ void SPU2configure()
 // --------------------------------------------------------------------------------------
 
 u16* DMABaseAddr;
-
-u32 SPU2ReadMemAddr(int core)
-{
-	return Cores[core].MADR;
-}
-void SPU2WriteMemAddr(int core, u32 value)
-{
-	Cores[core].MADR = value;
-}
 
 void SPU2setDMABaseAddr(uptr baseaddr)
 {
@@ -122,10 +90,7 @@ void SPU2writeDMA4Mem(u16* pMem, u32 size) // size now in 16bit units
 		TimeUpdate(*cyclePtr);
 
 	FileLog("[%10d] SPU2 writeDMA4Mem size %x at address %x\n", Cycles, size << 1, Cores[0].TSA);
-#ifdef S2R_ENABLE
-	if (!replay_mode)
-		s2r_writedma4(Cycles, pMem, size);
-#endif
+
 	Cores[0].DoDMAwrite(pMem, size);
 }
 
@@ -162,10 +127,7 @@ void SPU2writeDMA7Mem(u16* pMem, u32 size)
 		TimeUpdate(*cyclePtr);
 
 	FileLog("[%10d] SPU2 writeDMA7Mem size %x at address %x\n", Cycles, size << 1, Cores[1].TSA);
-#ifdef S2R_ENABLE
-	if (!replay_mode)
-		s2r_writedma7(Cycles, pMem, size);
-#endif
+
 	Cores[1].DoDMAwrite(pMem, size);
 }
 
@@ -193,6 +155,9 @@ s32 SPU2reset()
 	memset(spu2regs, 0, 0x010000);
 	memset(_spu2mem, 0, 0x200000);
 	memset(_spu2mem + 0x2800, 7, 0x10); // from BIOS reversal. Locks the voices so they don't run free.
+
+	Spdif.Info = 0; // Reset IRQ Status if it got set in a previously run game
+
 	Cores[0].Init(0);
 	Cores[1].Init(1);
 	return 0;
@@ -237,7 +202,6 @@ s32 SPU2init()
 		return 0;
 
 	IsInitialized = true;
-	SPU2_dummy_callback = false;
 
 	ReadSettings();
 
@@ -287,10 +251,6 @@ s32 SPU2init()
 	DMALogOpen();
 	InitADSR();
 
-#ifdef S2R_ENABLE
-	if (!replay_mode)
-		s2r_open(Cycles, "replay_dump.s2r");
-#endif
 	return 0;
 }
 
@@ -412,16 +372,10 @@ void SPU2shutdown()
 	if (!IsInitialized)
 		return;
 	IsInitialized = false;
-	SPU2_dummy_callback = false;
 
 	ConLog("* SPU2: Shutting down.\n");
 
 	SPU2close();
-
-#ifdef S2R_ENABLE
-	if (!replay_mode)
-		s2r_close();
-#endif
 
 	DoFullDump();
 #ifdef STREAM_DUMP
@@ -529,11 +483,9 @@ void SPU2async(u32 cycles)
 
 u16 SPU2read(u32 rmem)
 {
-	//	if(!replay_mode)
-	//		s2r_readreg(Cycles,rmem);
-
 	u16 ret = 0xDEAD;
 	u32 core = 0, mem = rmem & 0xFFFF, omem = mem;
+
 	if (mem & 0x400)
 	{
 		omem ^= 0x400;
@@ -579,11 +531,6 @@ u16 SPU2read(u32 rmem)
 
 void SPU2write(u32 rmem, u16 value)
 {
-#ifdef S2R_ENABLE
-	if (!replay_mode)
-		s2r_writereg(Cycles, rmem, value);
-#endif
-
 	// Note: Reverb/Effects are very sensitive to having precise update timings.
 	// If the SPU2 isn't in in sync with the IOP, samples can end up playing at rather
 	// incorrect pitches and loop lengths.
@@ -600,17 +547,16 @@ void SPU2write(u32 rmem, u16 value)
 	}
 }
 
-// if start is 1, starts recording spu2 data, else stops
 // returns a non zero value if successful
-// for now, pData is not used
-int SPU2setupRecording(int start, std::wstring* filename)
+bool SPU2setupRecording(const std::string* filename)
 {
-	if (start == 0)
-		RecordStop();
-	else if (start == 1)
-		RecordStart(filename);
+	return RecordStart(filename);
+}
 
-	return 0;
+void SPU2endRecording()
+{
+	if (WavRecordEnabled)
+		RecordStop();
 }
 
 s32 SPU2freeze(int mode, freezeData* data)

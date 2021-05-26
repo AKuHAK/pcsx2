@@ -68,7 +68,6 @@
 #undef ECX
 #include <wx/osx/private.h>		// needed to implement the app!
 #endif
-
 wxIMPLEMENT_APP(Pcsx2App);
 
 std::unique_ptr<AppConfig> g_Conf;
@@ -1183,7 +1182,10 @@ void Pcsx2App::SysExecute( CDVD_SourceType cdvdsrc, const wxString& elf_override
 {
 	SysExecutorThread.PostEvent( new SysExecEvent_Execute(cdvdsrc, elf_override) );
 #ifndef DISABLE_RECORDING
-	g_InputRecording.RecordingReset();
+	if (g_Conf->EmuOptions.EnableRecordingTools)
+	{
+		g_InputRecording.RecordingReset();
+	}
 #endif
 }
 

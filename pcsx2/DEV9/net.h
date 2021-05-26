@@ -15,7 +15,26 @@
 
 #pragma once
 #include <stdlib.h>
-#include <string.h> //uh isnt memcpy @ stdlib ?
+#include <string>
+
+#include <functional>
+#include <thread>
+#include <atomic>
+#include <mutex>
+#include <condition_variable>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <iphlpapi.h>
+#elif defined(__POSIX__)
+#include <sys/types.h>
+#include <ifaddrs.h>
+#endif
+
+#include "PacketReader/IP/IP_Address.h"
+#include "InternalServers/DHCP_Server.h"
+
+struct Config;
 
 // first three recognized by Xlink as Sony PS2
 const u8 defaultMAC[6] = {0x00, 0x04, 0x1F, 0x82, 0x30, 0x31};
@@ -37,24 +56,80 @@ extern mtfifo<NetPacket*> rx_fifo;
 extern mtfifo<NetPacket*> tx_fifo;
 */
 
+enum struct NetApi : int
+{
+	Unset = 0,
+	PCAP_Bridged = 1,
+	PCAP_Switched = 2,
+	TAP = 3,
+};
+
+struct AdapterEntry
+{
+	NetApi type;
+#ifdef _WIN32
+	std::wstring name;
+	std::wstring guid;
+#else
+	std::string name;
+	std::string guid;
+#endif
+};
+
 class NetAdapter
 {
+public:
+	static const PacketReader::IP::IP_Address internalIP;
+
 protected:
 	u8 ps2MAC[6];
+	static const u8 broadcastMAC[6];
+	static const u8 internalMAC[6];
+
+private:
+	std::thread internalRxThread;
+	std::atomic<bool> internalRxThreadRunning{false};
+
+	std::mutex internalRxMutex;
+	std::condition_variable internalRxCV;
+	bool internalRxHasData = false;
+
+	InternalServers::DHCP_Server dhcpServer = InternalServers::DHCP_Server([&] { InternalSignalReceived(); });
 
 public:
 	NetAdapter();
 	virtual bool blocks() = 0;
 	virtual bool isInitialised() = 0;
-	virtual bool recv(NetPacket* pkt) = 0; //gets a packet
-	virtual bool send(NetPacket* pkt) = 0; //sends the packet and deletes it when done
-	virtual void close() {}
-	virtual ~NetAdapter() {}
+	virtual bool recv(NetPacket* pkt); //gets a packet
+	virtual bool send(NetPacket* pkt); //sends the packet and deletes it when done
+	virtual void reloadSettings() = 0;
+	virtual void close(){};
+	virtual ~NetAdapter();
 
 protected:
 	void SetMACAddress(u8* mac);
+	bool VerifyPkt(NetPacket* pkt, int read_size);
+
+#ifdef _WIN32
+	void InitInternalServer(PIP_ADAPTER_ADDRESSES adapter);
+	void ReloadInternalServer(PIP_ADAPTER_ADDRESSES adapter);
+#elif defined(__POSIX__)
+	void InitInternalServer(ifaddrs* adapter);
+	void ReloadInternalServer(ifaddrs* adapter);
+#endif
+
+private:
+	bool InternalServerRecv(NetPacket* pkt);
+	bool InternalServerSend(NetPacket* pkt);
+
+	void InternalSignalReceived();
+	void InternalServerThread();
 };
 
 void tx_put(NetPacket* ptr);
-void InitNet(NetAdapter* adapter);
+void InitNet();
+void ReconfigureLiveNet(Config* oldConfig);
 void TermNet();
+
+const char* NetApiToString(NetApi api);
+const wchar_t* NetApiToWstring(NetApi api);

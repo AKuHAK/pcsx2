@@ -28,6 +28,7 @@
 #include "PS2Edefs.h"
 #include "PS2Eext.h"
 #include "net.h"
+#include "PacketReader/IP/IP_Address.h"
 #include "ATA/ATA.h"
 
 #ifdef _WIN32
@@ -53,12 +54,23 @@ bool rx_fifo_can_rx();
 #define HDD_DEF "DEV9hdd.raw"
 #endif
 
-#define HDD_MIN_GB 8
+#define HDD_MIN_GB 40
 #define HDD_MAX_GB 120
 
-typedef struct
+struct Config
 {
 	char Eth[256];
+	NetApi EthApi;
+	bool InterceptDHCP;
+	PacketReader::IP::IP_Address PS2IP;
+	PacketReader::IP::IP_Address Mask;
+	PacketReader::IP::IP_Address Gateway;
+	PacketReader::IP::IP_Address DNS1;
+	PacketReader::IP::IP_Address DNS2;
+	int AutoMask;
+	int AutoGateway;
+	int AutoDNS1;
+	int AutoDNS2;
 #ifdef _WIN32
 	wchar_t Hdd[256];
 #else
@@ -68,7 +80,7 @@ typedef struct
 
 	int hddEnable;
 	int ethEnable;
-} Config;
+};
 
 EXTERN Config config;
 
@@ -135,15 +147,14 @@ EXTERN dev9Struct dev9;
 
 EXTERN int ThreadRun;
 
-s32 _DEV9open();
-void _DEV9close();
-//void DEV9thread();
-
 //Yes these are meant to be a lowercase extern
 extern std::string s_strIniPath;
 extern std::string s_strLogPath;
 
+#ifdef _WIN32
+//Use own SysMessage for narrow char support
 void SysMessage(char* fmt, ...);
+#endif
 
 #define DEV9_R_REV 0x1f80146e
 
@@ -727,6 +738,7 @@ u32 DEV9read32(u32 addr);
 void DEV9write8(u32 addr, u8 value);
 void DEV9write16(u32 addr, u16 value);
 void DEV9write32(u32 addr, u32 value);
+void ApplyConfigIfRunning(Config oldConfig);
 
 #ifdef _WIN32
 #pragma warning(error : 4013)

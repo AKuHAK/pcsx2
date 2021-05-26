@@ -42,26 +42,14 @@ jobs:
 
     steps:
       # NOTE - useful for debugging
-      - name: Dump GitHub context
-        env:
-          GITHUB_CONTEXT: ${{ toJson(github) }}
-        run: |
-          echo "$GITHUB_CONTEXT"
+      # - name: Dump GitHub context
+      #   env:
+      #     GITHUB_CONTEXT: ${{ toJson(github) }}
+      #   run: |
+      #     echo "$GITHUB_CONTEXT"
 
       - name: Checkout Repository
         uses: actions/checkout@v2
-
-      - name: Cache Submodules
-        id: cache-submodules
-        uses: actions/cache@v2
-        with:
-          key: submodules-${{ hashFiles('./.gitmodules') }}
-          path: |
-            ./.git/modules/
-            ./3rdparty/fmt
-            ./3rdparty/xz
-            ./3rdparty/yaml-cpp
-            ./3rdparty/gtest
 
       - name: Checkout Submodules
         if: steps.cache-submodules.outputs.cache-hit != 'true'

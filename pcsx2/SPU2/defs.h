@@ -416,6 +416,10 @@ struct V_Core
 
 	V_Reverb Revb;              // Reverb Registers
 	V_ReverbBuffers RevBuffers; // buffer pointers for reverb, pre-calculated and pre-clipped.
+
+	s32 RevbDownBuf[2][64]; // Downsample buffer for reverb, one for each channel
+	s32 RevbUpBuf[2][64]; // Upsample buffer for reverb, one for each channel
+	u32 RevbSampleBufPos;
 	u32 EffectsStartA;
 	u32 EffectsEndA;
 	u32 ExtEffectsStartA;
@@ -447,8 +451,6 @@ struct V_Core
 	u16* DMARPtr; // Mem pointer for DMA Reads
 	u32 ReadSize;
 	bool IsDMARead;
-	u32 MADR;
-	u32 TADR;
 
 	u32 KeyOn; // not the KON register (though maybe it is)
 
@@ -491,6 +493,9 @@ struct V_Core
 	void Reverb_AdvanceBuffer();
 	StereoOut32 DoReverb(const StereoOut32& Input);
 	s32 RevbGetIndexer(s32 offset);
+
+	s32 ReverbDownsample(bool right);
+	StereoOut32 ReverbUpsample(bool phase);
 
 	StereoOut32 ReadInput();
 	StereoOut32 ReadInput_HiFi();

@@ -1,5 +1,5 @@
 /*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2020  PCSX2 Dev Team
+ *  Copyright (C) 2002-2021  PCSX2 Dev Team
  *
  *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU Lesser General Public License as published by the Free Software Found-
@@ -20,30 +20,37 @@
 class InputRecordingControls
 {
 public:
-	// Intended to be called at the end of each frame, but will no-op if the frame count has not
-	// truly incremented
+	// Intended to be called at the end of each frame, but will no-op if frame lock is active
 	//
-	// Increments the input recording's frame counter and will pause emulation if:
+	// Will set the pausing parameters for emulation if:
 	// - The InputRecordingControls::FrameAdvance was hit on the previous frame
 	// - Emulation was explicitly paused using InputRecordingControls::TogglePause
 	// - We are replaying an input recording and have hit the end
-	void HandleFrameAdvanceAndPausing();
+	void CheckPauseStatus();
+
+	// When loading a recording file or booting with a recording active, lock will be enabled.
+	// Emulation will be forced into and remain in a paused state until the transition in progress
+	// has completed - signaled when g_framecount and frameCountTracker are equal
+	//
+	// This function also handles actually pausing emulation when told to
+	void HandlePausingAndLocking();
+
 	// Called much more frequently than HandleFrameAdvanceAndPausing, instead of being per frame
 	// this hooks into pcsx2's main App event handler as it has to be able to resume emulation
 	// when drawing frames has compltely stopped
-	// 
+	//
 	// Resumes emulation if:
 	// - CoreThread is currently open and paused
 	// - We've signaled emulation to be resumed via TogglePause or FrameAdvancing
 	void ResumeCoreThreadIfStarted();
-	
+
 	// Resume emulation (incase the emulation is currently paused) and pause after a single frame has passed
 	void FrameAdvance();
 	// Returns true if emulation is currently set up to frame advance.
 	bool IsFrameAdvancing();
 	// Returns true if the input recording has been paused, which can occur:
 	// - After a single frame has passed after InputRecordingControls::FrameAdvance
-	// - Explicitly paused via an InputRecordingControls function 
+	// - Explicitly paused via an InputRecordingControls function
 	bool IsPaused();
 	// Pause emulation at the next available Vsync
 	void Pause();
@@ -51,10 +58,10 @@ public:
 	void PauseImmediately();
 	// Resume emulation when the next pcsx2 App event is handled
 	void Resume();
-	void SetFrameCountTracker(u32 newFrame);
-	// Sets frameAdvancing variable to false
-	// Used to restrict a frameAdvanceTracker value from transferring between recordings
-	void DisableFrameAdvance();
+	/**
+	 * @brief Resumes emulation immediately, don't wait until the next VSync
+	*/
+	void ResumeImmediately();
 	// Alternates emulation between a paused and unpaused state
 	void TogglePause();
 	// Switches between recording and replaying the active input recording file
@@ -70,10 +77,6 @@ private:
 	// Indicates on the next VSync if we are frame advancing, this value
 	// and should be cleared once a single frame has passed
 	bool frameAdvancing = false;
-	// The input recording frame that frame advancing began on
-	s32 frameAdvanceMarker = 0;
-	// Used to detect if the internal PCSX2 g_FrameCount has changed
-	u32 frameCountTracker = -1;
 	// Indicates if we intend to call CoreThread.PauseSelf() on the current or next available vsync
 	bool pauseEmulation = false;
 	// Indicates if we intend to call CoreThread.Resume() when the next pcsx2 App event is handled
@@ -82,6 +85,8 @@ private:
 	bool switchToReplay = false;
 	// Used to stop recording frames from incrementing during a reset
 	bool frameLock = false;
+	// The frame value to use as the frame lock reset point
+	u32 frameLockTracker = 0;
 };
 
 extern InputRecordingControls g_InputRecordingControls;

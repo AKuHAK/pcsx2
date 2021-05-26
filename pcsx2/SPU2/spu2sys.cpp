@@ -144,8 +144,6 @@ void V_Core::Init(int index)
 	AttrBit0 = 0;
 	DmaMode = 0;
 	DMAPtr = nullptr;
-	MADR = 0;
-	TADR = 0;
 	KeyOn = 0;
 	OutPos = 0;
 
@@ -222,6 +220,10 @@ void V_Core::Init(int index)
 	Regs.ENDX = 0xffffff; // PS2 confirmed
 
 	RevBuffers.NeedsUpdated = true;
+	RevbSampleBufPos = 0;
+	memset(RevbDownBuf, 0, sizeof(RevbDownBuf));
+	memset(RevbUpBuf, 0, sizeof(RevbUpBuf));
+
 	UpdateEffectsBufferSize();
 }
 
@@ -429,8 +431,7 @@ __forceinline void TimeUpdate(u32 cClocks)
 				if (!(Spdif.Info & (4 << i)) && Cores[i].IRQEnable)
 				{
 					Spdif.Info |= (4 << i);
-					if (!SPU2_dummy_callback)
-						spu2Irq();
+					spu2Irq();
 				}
 			}
 		}
@@ -458,7 +459,7 @@ __forceinline void TimeUpdate(u32 cClocks)
 		Cores[0].DMAICounter -= amt;
 		Cores[0].LastClock = *cyclePtr;
 		if(!Cores[0].AdmaInProgress)
-			Cores[0].MADR += amt / 2;
+			HW_DMA4_MADR += amt / 2;
 
 		if (Cores[0].DMAICounter <= 0)
 		{
@@ -479,18 +480,14 @@ __forceinline void TimeUpdate(u32 cClocks)
 					if (!(Spdif.Info & (4 << i)) && Cores[i].IRQEnable)
 					{
 						Spdif.Info |= (4 << i);
-						if (!SPU2_dummy_callback)
-							spu2Irq();
+						spu2Irq();
 					}
 				}
 			}
 			if (Cores[0].DMAICounter <= 0)
 			{
-				Cores[0].MADR = Cores[0].TADR;
-				if (!SPU2_dummy_callback)
-					spu2DMA4Irq();
-				else
-					SPU2interruptDMA4();
+				HW_DMA4_MADR = HW_DMA4_TADR;
+				spu2DMA4Irq();
 			}
 		}
 		else
@@ -515,7 +512,7 @@ __forceinline void TimeUpdate(u32 cClocks)
 		Cores[1].DMAICounter -= amt;
 		Cores[1].LastClock = *cyclePtr;
 		if (!Cores[1].AdmaInProgress)
-			Cores[1].MADR += amt / 2;
+			HW_DMA7_MADR += amt / 2;
 		if (Cores[1].DMAICounter <= 0)
 		{
 			if (((Cores[1].AutoDMACtrl & 2) != 2) && Cores[1].ReadSize)
@@ -535,19 +532,15 @@ __forceinline void TimeUpdate(u32 cClocks)
 					if (!(Spdif.Info & (4 << i)) && Cores[i].IRQEnable)
 					{
 						Spdif.Info |= (4 << i);
-						if (!SPU2_dummy_callback)
-							spu2Irq();
+						spu2Irq();
 					}
 				}
 			}
 
 			if (Cores[1].DMAICounter <= 0)
 			{
-				Cores[1].MADR = Cores[1].TADR;
-				if (!SPU2_dummy_callback)
-					spu2DMA7Irq();
-				else
-					SPU2interruptDMA7();
+				HW_DMA7_MADR = HW_DMA7_TADR;
+				spu2DMA7Irq();
 			}
 		}
 		else
@@ -734,40 +727,40 @@ void V_Core::WriteRegPS1(u32 mem, u16 value)
 			case 0x1d90: //         Channel FM (pitch lfo) mode (0-15)
 				SPU2_FastWrite(REG_S_PMON, value);
 				if (value != 0)
-					ConLog("spu2x warning: wants to set Pitch Modulation reg1 to %x \n", value);
+					ConLog("SPU2 warning: wants to set Pitch Modulation reg1 to %x \n", value);
 				break;
 
 			case 0x1d92: //         Channel FM (pitch lfo) mode (16-23)
 				SPU2_FastWrite(REG_S_PMON + 2, value);
 				if (value != 0)
-					ConLog("spu2x warning: wants to set Pitch Modulation reg2 to %x \n", value);
+					ConLog("SPU2 warning: wants to set Pitch Modulation reg2 to %x \n", value);
 				break;
 
 
 			case 0x1d94: //         Channel Noise mode (0-15)
 				SPU2_FastWrite(REG_S_NON, value);
 				if (value != 0)
-					ConLog("spu2x warning: wants to set Channel Noise mode reg1 to %x\n", value);
+					ConLog("SPU2 warning: wants to set Channel Noise mode reg1 to %x\n", value);
 				break;
 
 			case 0x1d96: //         Channel Noise mode (16-23)
 				SPU2_FastWrite(REG_S_NON + 2, value);
 				if (value != 0)
-					ConLog("spu2x warning: wants to set Channel Noise mode reg2 to %x\n", value);
+					ConLog("SPU2 warning: wants to set Channel Noise mode reg2 to %x\n", value);
 				break;
 
 			case 0x1d98: //         1F801D98h - Voice 0..23 Reverb mode aka Echo On (EON) (R/W)
 				//Regs.VMIXEL = value & 0xFFFF;
 				SPU2_FastWrite(REG_S_VMIXEL, value);
 				SPU2_FastWrite(REG_S_VMIXER, value);
-				//ConLog("spu2x warning: setting reverb mode reg1 to %x \n", Regs.VMIXEL);
+				//ConLog("SPU2 warning: setting reverb mode reg1 to %x \n", Regs.VMIXEL);
 				break;
 
 			case 0x1d9a: //         1F801D98h + 2 - Voice 0..23 Reverb mode aka Echo On (EON) (R/W)
 				//Regs.VMIXEL = value << 16;
 				SPU2_FastWrite(REG_S_VMIXEL + 2, value);
 				SPU2_FastWrite(REG_S_VMIXER + 2, value);
-				//ConLog("spu2x warning: setting reverb mode reg2 to %x \n", Regs.VMIXEL);
+				//ConLog("SPU2 warning: setting reverb mode reg2 to %x \n", Regs.VMIXEL);
 				break;
 
 			// this was wrong? // edit: appears so!
@@ -782,12 +775,12 @@ void V_Core::WriteRegPS1(u32 mem, u16 value)
 			//break;
 			case 0x1d9c: // Voice 0..15 ON/OFF (status) (ENDX) (R) // writeable but hw overrides it shortly after
 				//Regs.ENDX &= 0xff0000;
-				ConLog("spu2x warning: wants to set ENDX reg1 to %x \n", value);
+				ConLog("SPU2 warning: wants to set ENDX reg1 to %x \n", value);
 				break;
 
 			case 0x1d9e: //         // Voice 15..23 ON/OFF (status) (ENDX) (R) // writeable but hw overrides it shortly after
 				//Regs.ENDX &= 0xffff;
-				ConLog("spu2x warning: wants to set ENDX reg2 to %x \n", value);
+				ConLog("SPU2 warning: wants to set ENDX reg2 to %x \n", value);
 				break;
 
 			case 0x1da2: //         Reverb work area start
@@ -815,8 +808,7 @@ void V_Core::WriteRegPS1(u32 mem, u16 value)
 				if (Cores[0].IRQEnable && (Cores[0].IRQA <= Cores[0].ActiveTSA))
 				{
 					SetIrqCall(0);
-					if (!SPU2_dummy_callback)
-						spu2Irq();
+					spu2Irq();
 				}
 				DmaWrite(value);
 				show = false;

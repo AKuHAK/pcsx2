@@ -54,6 +54,7 @@ namespace usb_eyetoy
 
 		buffer_t mpeg_buffer;
 		std::mutex mpeg_mutex;
+		bool mirroring_enabled = true;
 
 		static int xioctl(int fh, unsigned long int request, void* arg)
 		{
@@ -78,7 +79,7 @@ namespace usb_eyetoy
 			if (pixelformat == V4L2_PIX_FMT_YUYV)
 			{
 				unsigned char* mpegData = (unsigned char*)calloc(1, 320 * 240 * 2);
-				int mpegLen = jo_write_mpeg(mpegData, ptr, 320, 240, JO_YUYV, JO_FLIP_X, JO_NONE);
+				int mpegLen = jo_write_mpeg(mpegData, ptr, 320, 240, JO_YUYV, mirroring_enabled ? JO_FLIP_X : JO_NONE, JO_NONE);
 				store_mpeg_frame(mpegData, mpegLen);
 				free(mpegData);
 			}
@@ -87,14 +88,14 @@ namespace usb_eyetoy
 				int width, height, actual_comps;
 				unsigned char* rgbData = jpgd::decompress_jpeg_image_from_memory(ptr, size, &width, &height, &actual_comps, 3);
 				unsigned char* mpegData = (unsigned char*)calloc(1, 320 * 240 * 2);
-				int mpegLen = jo_write_mpeg(mpegData, rgbData, 320, 240, JO_RGB24, JO_FLIP_X, JO_NONE);
+				int mpegLen = jo_write_mpeg(mpegData, rgbData, 320, 240, JO_RGB24, mirroring_enabled ? JO_FLIP_X : JO_NONE, JO_NONE);
 				free(rgbData);
 				store_mpeg_frame(mpegData, mpegLen);
 				free(mpegData);
 			}
 			else
 			{
-				Console.Warning("unk format %c%c%c%c\n", pixelformat, pixelformat >> 8, pixelformat >> 16, pixelformat >> 24);
+				Console.Warning("Camera: Unknown format %c%c%c%c", pixelformat, pixelformat >> 8, pixelformat >> 16, pixelformat >> 24);
 			}
 		}
 
@@ -114,7 +115,7 @@ namespace usb_eyetoy
 
 					case EIO:
 					default:
-						Console.Warning("%s error %d, %s\n", "VIDIOC_DQBUF", errno, strerror(errno));
+						Console.Warning("Camera: %s error %d, %s", "VIDIOC_DQBUF", errno, strerror(errno));
 						return -1;
 				}
 			}
@@ -125,7 +126,7 @@ namespace usb_eyetoy
 
 			if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
 			{
-				Console.Warning("%s error %d, %s\n", "VIDIOC_QBUF", errno, strerror(errno));
+				Console.Warning("Camera: %s error %d, %s", "VIDIOC_QBUF", errno, strerror(errno));
 				return -1;
 			}
 
@@ -176,7 +177,7 @@ namespace usb_eyetoy
 				CLEAR(cap);
 				if (ioctl(fd, VIDIOC_QUERYCAP, &cap) >= 0)
 				{
-					Console.Warning("Camera: %s / %s\n", dev_name, (char*)cap.card);
+					Console.Warning("Camera: %s / %s", dev_name, (char*)cap.card);
 					if (!selectedDevice.empty() && strcmp(selectedDevice.c_str(), (char*)cap.card) == 0)
 					{
 						goto cont;
@@ -193,7 +194,7 @@ namespace usb_eyetoy
 				fd = open(dev_name, O_RDWR | O_NONBLOCK, 0);
 				if (-1 == fd)
 				{
-					Console.Warning("Cannot open '%s': %d, %s\n", dev_name, errno, strerror(errno));
+					Console.Warning("Camera: Cannot open '%s': %d, %s", dev_name, errno, strerror(errno));
 					return -1;
 				}
 			}
@@ -205,25 +206,25 @@ namespace usb_eyetoy
 			{
 				if (EINVAL == errno)
 				{
-					Console.Warning("%s is no V4L2 device\n", dev_name);
+					Console.Warning("Camera: %s is no V4L2 device", dev_name);
 					return -1;
 				}
 				else
 				{
-					Console.Warning("%s error %d, %s\n", "VIDIOC_QUERYCAP", errno, strerror(errno));
+					Console.Warning("Camera: %s error %d, %s", "VIDIOC_QUERYCAP", errno, strerror(errno));
 					return -1;
 				}
 			}
 
 			if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE))
 			{
-				Console.Warning("%s is no video capture device\n", dev_name);
+				Console.Warning("Camera: %s is no video capture device", dev_name);
 				return -1;
 			}
 
 			if (!(cap.capabilities & V4L2_CAP_STREAMING))
 			{
-				Console.Warning("%s does not support streaming i/o\n", dev_name);
+				Console.Warning("Camera: %s does not support streaming i/o", dev_name);
 				return -1;
 			}
 
@@ -249,6 +250,27 @@ namespace usb_eyetoy
 				}
 			}
 
+			struct v4l2_fmtdesc fmtd;
+			CLEAR(fmtd);
+			struct v4l2_frmsizeenum frmsize;
+			CLEAR(frmsize);
+
+			fmtd.index = 0;
+			fmtd.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+			while (xioctl(fd, VIDIOC_ENUM_FMT, &fmtd) >= 0)
+			{
+				frmsize.pixel_format = fmtd.pixelformat;
+				frmsize.index = 0;
+				while (xioctl(fd, VIDIOC_ENUM_FRAMESIZES, &frmsize) >= 0)
+				{
+					Console.Warning("Camera: supported format[%d] '%s' : %dx%d",
+							fmtd.index, fmtd.description,
+							frmsize.discrete.width, frmsize.discrete.height);
+					frmsize.index++;
+				}
+				fmtd.index++;
+			}
+
 			struct v4l2_format fmt;
 			CLEAR(fmt);
 			fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -258,11 +280,11 @@ namespace usb_eyetoy
 
 			if (-1 == xioctl(fd, VIDIOC_S_FMT, &fmt))
 			{
-				Console.Warning("%s error %d, %s\n", "VIDIOC_S_FMT", errno, strerror(errno));
+				Console.Warning("Camera: %s error %d, %s", "VIDIOC_S_FMT", errno, strerror(errno));
 				return -1;
 			}
 			pixelformat = fmt.fmt.pix.pixelformat;
-			Console.Warning("VIDIOC_S_FMT res=%dx%d, fmt=%c%c%c%c\n", fmt.fmt.pix.width, fmt.fmt.pix.height,
+			Console.Warning("Camera: selected format: res=%dx%d, fmt=%c%c%c%c", fmt.fmt.pix.width, fmt.fmt.pix.height,
 					pixelformat, pixelformat >> 8, pixelformat >> 16, pixelformat >> 24);
 
 			struct v4l2_requestbuffers req;
@@ -275,19 +297,19 @@ namespace usb_eyetoy
 			{
 				if (EINVAL == errno)
 				{
-					Console.Warning("%s does not support memory mapping\n", dev_name);
+					Console.Warning("Camera: %s does not support memory mapping", dev_name);
 					return -1;
 				}
 				else
 				{
-					Console.Warning("%s error %d, %s\n", "VIDIOC_REQBUFS", errno, strerror(errno));
+					Console.Warning("Camera: %s error %d, %s", "VIDIOC_REQBUFS", errno, strerror(errno));
 					return -1;
 				}
 			}
 
 			if (req.count < 2)
 			{
-				Console.Warning("Insufficient buffer memory on %s\n", dev_name);
+				Console.Warning("Camera: Insufficient buffer memory on %s", dev_name);
 				return -1;
 			}
 
@@ -295,7 +317,7 @@ namespace usb_eyetoy
 
 			if (!buffers)
 			{
-				Console.Warning("Out of memory\n");
+				Console.Warning("Camera: Out of memory");
 				return -1;
 			}
 
@@ -310,7 +332,7 @@ namespace usb_eyetoy
 
 				if (-1 == xioctl(fd, VIDIOC_QUERYBUF, &buf))
 				{
-					Console.Warning("%s error %d, %s\n", "VIDIOC_QUERYBUF", errno, strerror(errno));
+					Console.Warning("Camera: %s error %d, %s", "VIDIOC_QUERYBUF", errno, strerror(errno));
 					return -1;
 				}
 
@@ -319,7 +341,7 @@ namespace usb_eyetoy
 
 				if (MAP_FAILED == buffers[n_buffers].start)
 				{
-					Console.Warning("%s error %d, %s\n", "mmap", errno, strerror(errno));
+					Console.Warning("Camera: %s error %d, %s", "mmap", errno, strerror(errno));
 					return -1;
 				}
 			}
@@ -334,7 +356,7 @@ namespace usb_eyetoy
 
 				if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
 				{
-					Console.Warning("%s error %d, %s\n", "VIDIOC_QBUF", errno, strerror(errno));
+					Console.Warning("Camera: %s error %d, %s", "VIDIOC_QBUF", errno, strerror(errno));
 					return -1;
 				}
 			}
@@ -343,7 +365,7 @@ namespace usb_eyetoy
 			type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 			if (-1 == xioctl(fd, VIDIOC_STREAMON, &type))
 			{
-				Console.Warning("%s error %d, %s\n", "VIDIOC_STREAMON", errno, strerror(errno));
+				Console.Warning("Camera: %s error %d, %s", "VIDIOC_STREAMON", errno, strerror(errno));
 				return -1;
 			}
 			return 0;
@@ -368,13 +390,13 @@ namespace usb_eyetoy
 					{
 						if (errno == EINTR)
 							continue;
-						Console.Warning("%s error %d, %s\n", "select", errno, strerror(errno));
+						Console.Warning("Camera: %s error %d, %s", "select", errno, strerror(errno));
 						break;
 					}
 
 					if (ret == 0)
 					{
-						Console.Warning("select timeout\n");
+						Console.Warning("Camera: select timeout");
 						break;
 					}
 
@@ -383,7 +405,7 @@ namespace usb_eyetoy
 				}
 			}
 			eyetoy_running = 0;
-			Console.Warning("V4L2 thread quit\n");
+			Console.Warning("Camera: V4L2 thread quit");
 			return NULL;
 		}
 
@@ -393,7 +415,7 @@ namespace usb_eyetoy
 			type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 			if (-1 == xioctl(fd, VIDIOC_STREAMOFF, &type))
 			{
-				Console.Warning("%s error %d, %s\n", "VIDIOC_STREAMOFF", errno, strerror(errno));
+				Console.Warning("Camera: %s error %d, %s", "VIDIOC_STREAMOFF", errno, strerror(errno));
 				return -1;
 			}
 
@@ -401,7 +423,7 @@ namespace usb_eyetoy
 			{
 				if (-1 == munmap(buffers[i].start, buffers[i].length))
 				{
-					Console.Warning("%s error %d, %s\n", "munmap", errno, strerror(errno));
+					Console.Warning("Camera: %s error %d, %s", "munmap", errno, strerror(errno));
 					return -1;
 				}
 			}
@@ -409,7 +431,7 @@ namespace usb_eyetoy
 
 			if (-1 == close(fd))
 			{
-				Console.Warning("%s error %d, %s\n", "close", errno, strerror(errno));
+				Console.Warning("Camera: %s error %d, %s", "close", errno, strerror(errno));
 				return -1;
 			}
 			fd = -1;
@@ -480,9 +502,15 @@ namespace usb_eyetoy
 			if (len < (int)mpeg_buffer.length)
 				len2 = len;
 			memcpy(buf, mpeg_buffer.start, len2);
+			mpeg_buffer.length = 0;
 			mpeg_mutex.unlock();
 			return len2;
 		};
+
+		void V4L2::SetMirroring(bool state)
+		{
+			mirroring_enabled = state;
+		}
 
 		static void deviceChanged(GtkComboBox* widget, gpointer data)
 		{

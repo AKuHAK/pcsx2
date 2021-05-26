@@ -1,5 +1,5 @@
 /*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
+ *  Copyright (C) 2002-2021  PCSX2 Dev Team
  *
  *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU Lesser General Public License as published by the Free Software Found-
@@ -46,13 +46,13 @@ void Pcsx2App::DetectCpuAndUserMode()
 	x86caps.CountCores();
 	x86caps.SIMD_EstablishMXCSRmask();
 
-	if (!x86caps.hasStreamingSIMD2Extensions)
+	if (!x86caps.hasStreamingSIMD4Extensions)
 	{
-		// This code will probably never run if the binary was correctly compiled for SSE2
-		// SSE2 is required for any decent speed and is supported by more than decade old x86 CPUs
+		// This code will probably never run if the binary was correctly compiled for SSE4
+		// SSE4 is required for any decent speed and is supported by more than decade old x86 CPUs
 		throw Exception::HardwareDeficiency()
-			.SetDiagMsg(L"Critical Failure: SSE2 Extensions not available.")
-			.SetUserMsg(_("SSE2 extensions are not available.  PCSX2 requires a cpu that supports the SSE2 instruction set."));
+			.SetDiagMsg(L"Critical Failure: SSE4.1 Extensions not available.")
+			.SetUserMsg(_("SSE4 extensions are not available.  PCSX2 requires a cpu that supports the SSE4.1 instruction set."));
 	}
 #endif
 
@@ -182,14 +182,12 @@ void Pcsx2App::AllocateCoreStuffs()
 			if (BaseException* ex = m_CpuProviders->GetException_MicroVU0())
 			{
 				scrollableTextArea->AppendText(L"* microVU0\n\t" + ex->FormatDisplayMessage() + L"\n\n");
-				recOps.UseMicroVU0 = false;
 				recOps.EnableVU0 = false;
 			}
 
 			if (BaseException* ex = m_CpuProviders->GetException_MicroVU1())
 			{
 				scrollableTextArea->AppendText(L"* microVU1\n\t" + ex->FormatDisplayMessage() + L"\n\n");
-				recOps.UseMicroVU1 = false;
 				recOps.EnableVU1 = false;
 			}
 
@@ -513,7 +511,7 @@ bool Pcsx2App::OnInit()
 		else if (Startup.SysAutoRunElf)
 		{
 			g_Conf->EmuOptions.UseBOOT2Injection = true;
-
+			g_Conf->Folders.RunELF = wxFileName(Startup.ElfFile).GetPath();
 			sApp.SysExecute(Startup.CdvdSource, Startup.ElfFile);
 		}
 		else if (Startup.SysAutoRunIrx)
