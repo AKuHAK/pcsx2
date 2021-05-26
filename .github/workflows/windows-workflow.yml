@@ -49,7 +49,7 @@ jobs:
 
       - name: Checkout Submodules
         if: steps.cache-submodules.outputs.cache-hit != 'true'
-        run: git submodule update --init --recursive -j$(getconf _NPROCESSORS_ONLN)
+        run: git submodule update --init --recursive -j $(getconf _NPROCESSORS_ONLN)
 
       - name: Verify VS Project Files
         shell: powershell
