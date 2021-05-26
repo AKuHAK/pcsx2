@@ -25,6 +25,9 @@
 #elif defined(__linux__)
 #include <sys/ioctl.h>
 #include <net/if.h>
+#elif defined(__POSIX__)
+#include <sys/types.h>
+#include <ifaddrs.h>
 #endif
 
 #include <stdio.h>
@@ -55,7 +58,7 @@ mac_address host_mac;
 //IP_ADAPTER_ADDRESSES is a structure that contains ptrs to data in other regions
 //of the buffer, se we need to return both so the caller can free the buffer
 //after it's finished reading the needed data from IP_ADAPTER_ADDRESSES
-bool GetWin32Adapter(const char* name, PIP_ADAPTER_ADDRESSES adapter, std::unique_ptr<IP_ADAPTER_ADDRESSES[]>* buffer)
+bool PCAPGetWin32Adapter(const char* name, PIP_ADAPTER_ADDRESSES adapter, std::unique_ptr<IP_ADAPTER_ADDRESSES[]>* buffer)
 {
 	const int guidindex = strlen("\\Device\\NPF_");
 
@@ -74,11 +77,11 @@ bool GetWin32Adapter(const char* name, PIP_ADAPTER_ADDRESSES adapter, std::uniqu
 
 	if (dwStatus == ERROR_BUFFER_OVERFLOW)
 	{
-		DevCon.WriteLn("GetWin32Adapter() buffer too small, resizing");
+		DevCon.WriteLn("DEV9: GetWin32Adapter() buffer too small, resizing");
 		neededSize = dwBufLen / sizeof(IP_ADAPTER_ADDRESSES) + 1;
 		AdapterInfo = std::make_unique<IP_ADAPTER_ADDRESSES[]>(neededSize);
 		dwBufLen = sizeof(IP_ADAPTER_ADDRESSES) * neededSize;
-		DevCon.WriteLn("New size %i", neededSize);
+		DevCon.WriteLn("DEV9: New size %i", neededSize);
 
 		DWORD dwStatus = GetAdaptersAddresses(
 			AF_UNSPEC,
@@ -105,6 +108,38 @@ bool GetWin32Adapter(const char* name, PIP_ADAPTER_ADDRESSES adapter, std::uniqu
 	} while (pAdapterInfo);
 	return false;
 }
+#elif defined(__POSIX__)
+//getifaddrs is not POSIX, but is supported on MAC & Linux
+bool PCAPGetIfAdapter(char* name, ifaddrs* adapter, ifaddrs** buffer)
+{
+	//Note, we don't support "any" adapter, but that also fails in pcap_io_init()
+	ifaddrs* adapterInfo;
+	ifaddrs* pAdapter;
+
+	int error = getifaddrs(&adapterInfo);
+	if (error)
+		return false;
+
+	pAdapter = adapterInfo;
+
+	do
+	{
+		if (pAdapter->ifa_addr->sa_family == AF_INET && strcmp(pAdapter->ifa_name, name) == 0)
+			break;
+
+		pAdapter = pAdapter->ifa_next;
+	} while (pAdapter);
+
+	if (pAdapter != nullptr)
+	{
+		*adapter = *pAdapter;
+		*buffer = adapterInfo;
+		return true;
+	}
+
+	freeifaddrs(adapterInfo);
+	return false;
+}
 #endif
 
 // Fetches the MAC address and prints it
@@ -115,7 +150,7 @@ int GetMACAddress(char* adapter, mac_address* addr)
 	IP_ADAPTER_ADDRESSES adapterInfo;
 	std::unique_ptr<IP_ADAPTER_ADDRESSES[]> buffer;
 
-	if (GetWin32Adapter(adapter, &adapterInfo, &buffer))
+	if (PCAPGetWin32Adapter(adapter, &adapterInfo, &buffer))
 	{
 		memcpy(addr, adapterInfo.PhysicalAddress, 6);
 		retval = 1;
@@ -135,6 +170,8 @@ int GetMACAddress(char* adapter, mac_address* addr)
 		SysMessage("Could not get MAC address for adapter: %s", adapter);
 	}
 	close(fd);
+#else
+	SysMessage("Could not get MAC address for adapter, OS not supported");
 #endif
 	return retval;
 }
@@ -145,7 +182,7 @@ int pcap_io_init(char* adapter, bool switched, mac_address virtual_mac)
 	char filter[1024] = "ether broadcast or ether dst ";
 	int dlt;
 	char* dlt_name;
-	Console.WriteLn("Opening adapter '%s'...", adapter);
+	Console.WriteLn("DEV9: Opening adapter '%s'...", adapter);
 
 	pcap_io_switched = switched;
 
@@ -158,8 +195,8 @@ int pcap_io_init(char* adapter, bool switched, mac_address virtual_mac)
 								   errbuf // error buffer
 								   )) == NULL)
 	{
-		Console.Error("%s", errbuf);
-		Console.Error("Unable to open the adapter. %s is not supported by pcap", adapter);
+		Console.Error("DEV9: %s", errbuf);
+		Console.Error("DEV9: Unable to open the adapter. %s is not supported by pcap", adapter);
 		return -1;
 	}
 	if (switched)
@@ -171,13 +208,13 @@ int pcap_io_init(char* adapter, bool switched, mac_address virtual_mac)
 
 		if (pcap_compile(adhandle, &fp, filter, 1, PCAP_NETMASK_UNKNOWN) == -1)
 		{
-			Console.Error("Error calling pcap_compile: %s", pcap_geterr(adhandle));
+			Console.Error("DEV9: Error calling pcap_compile: %s", pcap_geterr(adhandle));
 			return -1;
 		}
 
 		if (pcap_setfilter(adhandle, &fp) == -1)
 		{
-			Console.Error("Error setting filter: %s", pcap_geterr(adhandle));
+			Console.Error("DEV9: Error setting filter: %s", pcap_geterr(adhandle));
 			return -1;
 		}
 	}
@@ -186,7 +223,7 @@ int pcap_io_init(char* adapter, bool switched, mac_address virtual_mac)
 	dlt = pcap_datalink(adhandle);
 	dlt_name = (char*)pcap_datalink_val_to_name(dlt);
 
-	Console.Error("Device uses DLT %d: %s", dlt, dlt_name);
+	Console.Error("DEV9: Device uses DLT %d: %s", dlt, dlt_name);
 	switch (dlt)
 	{
 		case DLT_EN10MB:
@@ -204,7 +241,7 @@ int pcap_io_init(char* adapter, bool switched, mac_address virtual_mac)
 #endif
 
 	pcap_io_running = 1;
-	Console.WriteLn("Adapter Ok.");
+	Console.WriteLn("DEV9: Adapter Ok.");
 	return 0;
 }
 
@@ -330,6 +367,25 @@ PCAPAdapter::PCAPAdapter()
 	host_mac = hostMAC;
 	ps2_mac = newMAC; //Needed outside of this class
 
+#ifdef _WIN32
+	IP_ADAPTER_ADDRESSES adapter;
+	std::unique_ptr<IP_ADAPTER_ADDRESSES[]> buffer;
+	if (PCAPGetWin32Adapter(config.Eth, &adapter, &buffer))
+		InitInternalServer(&adapter);
+	else
+		InitInternalServer(nullptr);
+#elif defined(__POSIX__)
+	ifaddrs adapter;
+	ifaddrs* buffer;
+	if (PCAPGetIfAdapter(config.Eth, &adapter, &buffer))
+	{
+		InitInternalServer(&adapter);
+		freeifaddrs(buffer);
+	}
+	else
+		InitInternalServer(nullptr);
+#endif
+
 	if (pcap_io_init(config.Eth, config.EthApi == NetApi::PCAP_Switched, newMAC) == -1)
 	{
 		SysMessage("Can't open Device '%s'\n", config.Eth);
@@ -337,7 +393,7 @@ PCAPAdapter::PCAPAdapter()
 }
 bool PCAPAdapter::blocks()
 {
-	return false;
+	return true;
 }
 bool PCAPAdapter::isInitialised()
 {
@@ -359,6 +415,9 @@ bool PCAPAdapter::recv(NetPacket* pkt)
 //sends the packet .rv :true success
 bool PCAPAdapter::send(NetPacket* pkt)
 {
+	if (NetAdapter::send(pkt))
+		return true;
+
 	if (pcap_io_send(pkt->buffer, pkt->size))
 	{
 		return false;
@@ -368,6 +427,29 @@ bool PCAPAdapter::send(NetPacket* pkt)
 		return true;
 	}
 }
+
+void PCAPAdapter::reloadSettings()
+{
+#ifdef _WIN32
+	IP_ADAPTER_ADDRESSES adapter;
+	std::unique_ptr<IP_ADAPTER_ADDRESSES[]> buffer;
+	if (PCAPGetWin32Adapter(config.Eth, &adapter, &buffer))
+		ReloadInternalServer(&adapter);
+	else
+		ReloadInternalServer(nullptr);
+#elif defined(__POSIX__)
+	ifaddrs adapter;
+	ifaddrs* buffer;
+	if (PCAPGetIfAdapter(config.Eth, &adapter, &buffer))
+	{
+		ReloadInternalServer(&adapter);
+		freeifaddrs(buffer);
+	}
+	else
+		ReloadInternalServer(nullptr);
+#endif
+}
+
 PCAPAdapter::~PCAPAdapter()
 {
 	pcap_io_close();
@@ -404,7 +486,7 @@ std::vector<AdapterEntry> PCAPAdapter::GetAdapters()
 		IP_ADAPTER_ADDRESSES adapterInfo;
 		std::unique_ptr<IP_ADAPTER_ADDRESSES[]> buffer;
 
-		if (GetWin32Adapter(d->name, &adapterInfo, &buffer))
+		if (PCAPGetWin32Adapter(d->name, &adapterInfo, &buffer))
 			entry.name = std::wstring(adapterInfo.FriendlyName);
 		else
 		{

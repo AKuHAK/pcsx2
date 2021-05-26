@@ -286,6 +286,16 @@
     <ClCompile Include="..\..\DEV9\ATA\HddCreate.cpp" />
     <ClCompile Include="..\..\DEV9\DEV9.cpp" />
     <ClCompile Include="..\..\DEV9\flash.cpp" />
+    <ClCompile Include="..\..\DEV9\InternalServers\DHCP_Server.cpp" />
+    <ClCompile Include="..\..\DEV9\PacketReader\EthernetFrame.cpp" />
+    <ClCompile Include="..\..\DEV9\PacketReader\IP\UDP\DHCP\DHCP_Options.cpp" />
+    <ClCompile Include="..\..\DEV9\PacketReader\IP\UDP\DHCP\DHCP_Packet.cpp" />
+    <ClCompile Include="..\..\DEV9\PacketReader\IP\UDP\DNS\DNS_Classes.cpp" />
+    <ClCompile Include="..\..\DEV9\PacketReader\IP\UDP\DNS\DNS_Packet.cpp" />
+    <ClCompile Include="..\..\DEV9\PacketReader\IP\UDP\UDP_Packet.cpp" />
+    <ClCompile Include="..\..\DEV9\PacketReader\IP\IP_Options.cpp" />
+    <ClCompile Include="..\..\DEV9\PacketReader\IP\IP_Packet.cpp" />
+    <ClCompile Include="..\..\DEV9\PacketReader\NetLib.cpp" />
     <ClCompile Include="..\..\DEV9\pcap_io.cpp" />
     <ClCompile Include="..\..\DEV9\Win32\pcap_io_win32.cpp" />
     <ClCompile Include="..\..\DEV9\smap.cpp" />
@@ -331,6 +341,7 @@
     <ClCompile Include="..\..\PAD\Windows\WindowsMouse.cpp" />
     <ClCompile Include="..\..\PAD\Windows\WndProcEater.cpp" />
     <ClCompile Include="..\..\PAD\Windows\XInputEnum.cpp" />
+    <ClCompile Include="..\..\Recording\Utilities\InputRecordingLogger.cpp" />
     <ClCompile Include="..\..\SPU2\DplIIdecoder.cpp" />
     <ClCompile Include="..\..\SPU2\debug.cpp" />
     <ClCompile Include="..\..\SPU2\RegLog.cpp" />
@@ -576,10 +587,6 @@
     <ClCompile Include="..\..\gui\AppRes.cpp" />
     <ClCompile Include="..\..\gui\ConsoleLogger.cpp" />
     <ClCompile Include="..\..\gui\CpuUsageProvider.cpp" />
-    <ClCompile Include="..\..\gui\CpuUsageProviderLnx.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="..\..\gui\CpuUsageProviderMSW.cpp" />
     <ClCompile Include="..\..\gui\ExecutorThread.cpp" />
     <ClCompile Include="..\..\gui\FrameForGS.cpp" />
     <ClCompile Include="..\..\gui\GlobalCommands.cpp" />
@@ -651,8 +658,23 @@
     <ClInclude Include="..\..\DEV9\ATA\HddCreate.h" />
     <ClInclude Include="..\..\DEV9\Config.h" />
     <ClInclude Include="..\..\DEV9\DEV9.h" />
+    <ClInclude Include="..\..\DEV9\InternalServers\DHCP_Server.h" />
     <ClInclude Include="..\..\DEV9\net.h" />
+    <ClInclude Include="..\..\DEV9\PacketReader\EthernetFrame.h" />
+    <ClInclude Include="..\..\DEV9\PacketReader\IP\UDP\DHCP\DHCP_Options.h" />
+    <ClInclude Include="..\..\DEV9\PacketReader\IP\UDP\DHCP\DHCP_Packet.h" />
+    <ClInclude Include="..\..\DEV9\PacketReader\IP\UDP\DNS\DNS_Classes.h" />
+    <ClInclude Include="..\..\DEV9\PacketReader\IP\UDP\DNS\DNS_Enums.h" />
+    <ClInclude Include="..\..\DEV9\PacketReader\IP\UDP\DNS\DNS_Packet.h" />
+    <ClInclude Include="..\..\DEV9\PacketReader\IP\UDP\UDP_Packet.h" />
+    <ClInclude Include="..\..\DEV9\PacketReader\IP\IP_Address.h" />
+    <ClInclude Include="..\..\DEV9\PacketReader\IP\IP_Options.h" />
+    <ClInclude Include="..\..\DEV9\PacketReader\IP\IP_Packet.h" />
+    <ClInclude Include="..\..\DEV9\PacketReader\IP\IP_Payload.h" />
+    <ClInclude Include="..\..\DEV9\PacketReader\NetLib.h" />
+    <ClInclude Include="..\..\DEV9\PacketReader\Payload.h" />
     <ClInclude Include="..\..\DEV9\pcap_io.h" />
+    <ClInclude Include="..\..\DEV9\SimpleQueue.h" />
     <ClInclude Include="..\..\DEV9\smap.h" />
     <ClInclude Include="..\..\DEV9\Win32\pcap_io_win32_funcs.h" />
     <ClInclude Include="..\..\DEV9\Win32\resource.h" />

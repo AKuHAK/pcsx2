@@ -327,6 +327,16 @@ set(pcsx2DEV9Sources
 	DEV9/ATA/ATA_State.cpp
 	DEV9/ATA/ATA_Transfer.cpp
 	DEV9/ATA/HddCreate.cpp
+	DEV9/InternalServers/DHCP_Server.cpp
+	DEV9/PacketReader/IP/UDP/DHCP/DHCP_Options.cpp
+	DEV9/PacketReader/IP/UDP/DHCP/DHCP_Packet.cpp
+	DEV9/PacketReader/IP/UDP/DNS/DNS_Classes.cpp
+	DEV9/PacketReader/IP/UDP/DNS/DNS_Packet.cpp
+	DEV9/PacketReader/IP/UDP/UDP_Packet.cpp
+	DEV9/PacketReader/IP/IP_Options.cpp
+	DEV9/PacketReader/IP/IP_Packet.cpp
+	DEV9/PacketReader/EthernetFrame.cpp
+	DEV9/PacketReader/NetLib.cpp
 	DEV9/smap.cpp
 	DEV9/DEV9.cpp
 	DEV9/flash.cpp
@@ -342,8 +352,23 @@ set(pcsx2DEV9Headers
 	DEV9/ATA/ATA.h
 	DEV9/ATA/HddCreate.h
 	DEV9/DEV9.h
+	DEV9/InternalServers/DHCP_Server.cpp
 	DEV9/net.h
+	DEV9/PacketReader/IP/UDP/DHCP/DHCP_Options.h
+	DEV9/PacketReader/IP/UDP/DHCP/DHCP_Packet.h
+	DEV9/PacketReader/IP/UDP/DNS/DNS_Classes.h
+	DEV9/PacketReader/IP/UDP/DNS/DNS_Enums.h
+	DEV9/PacketReader/IP/UDP/DNS/DNS_Packet.h
+	DEV9/PacketReader/IP/UDP/UDP_Packet.h
+	DEV9/PacketReader/IP/IP_Address.h
+	DEV9/PacketReader/IP/IP_Options.h
+	DEV9/PacketReader/IP/IP_Packet.h
+	DEV9/PacketReader/IP/IP_Payload.h
+	DEV9/PacketReader/EthernetFrame.h
+	DEV9/PacketReader/NetLib.h
+	DEV9/PacketReader/Payload.h
 	DEV9/pcap_io.h
+	DEV9/SimpleQueue.h
 	DEV9/smap.h
 	${pcsx2DEV9UIHeaders}
 	)
@@ -744,7 +769,6 @@ set(pcsx2IPUHeaders
 set(pcsx2LinuxSources
 	CDVD/Linux/DriveUtility.cpp
 	CDVD/Linux/IOCtlSrc.cpp
-	gui/CpuUsageProviderLnx.cpp
 	Linux/LnxConsolePipe.cpp
 	Linux/LnxKeyCodes.cpp
 	Linux/LnxFlatFileReader.cpp
@@ -753,7 +777,6 @@ set(pcsx2LinuxSources
 set(pcsx2OSXSources
 	CDVD/Linux/DriveUtility.cpp
 	CDVD/Linux/IOCtlSrc.cpp
-	gui/CpuUsageProviderLnx.cpp
 	Linux/LnxConsolePipe.cpp
 #	Linux/LnxKeyCodes.cpp
 	Darwin/DarwinFlatFileReader.cpp
@@ -762,7 +785,6 @@ set(pcsx2OSXSources
 set(pcsx2FreeBSDSources
 	CDVD/Linux/DriveUtility.cpp
 	CDVD/Linux/IOCtlSrc.cpp
-	gui/CpuUsageProviderLnx.cpp
 	Linux/LnxConsolePipe.cpp
 	Linux/LnxKeyCodes.cpp
 	Darwin/DarwinFlatFileReader.cpp
@@ -818,6 +840,7 @@ set(pcsx2RecordingSources
 	${rec_src}/InputRecordingFile.cpp
 	${rec_src}/NewRecordingFrame.cpp
 	${rec_src}/PadData.cpp
+	${rec_src}/Utilities/InputRecordingLogger.cpp
 	${rec_vp_src}/VirtualPad.cpp
 	${rec_vp_src}/VirtualPadData.cpp
 	${rec_vp_src}/VirtualPadResources.cpp
@@ -894,7 +917,6 @@ set(pcsx2ZipToolsHeaders
 set(pcsx2WindowsSources
 	CDVD/Windows/DriveUtility.cpp
 	CDVD/Windows/IOCtlSrc.cpp
-	gui/CpuUsageProviderMSW.cpp
 	windows/FlatFileReaderWindows.cpp
 	windows/Optimus.cpp
 	windows/PatchBrowser.cpp
