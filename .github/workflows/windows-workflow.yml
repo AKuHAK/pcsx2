@@ -12,8 +12,6 @@ on:
       - bin/PCSX2_keys.ini.default
       - "pcsx2/PAD/Linux/**"
   pull_request:
-    branches:
-      - master
     paths-ignore:
       - .gitignore
       - "**/*.md"
@@ -51,7 +49,7 @@ jobs:
 
       - name: Checkout Submodules
         if: steps.cache-submodules.outputs.cache-hit != 'true'
-        run: git submodule update --init --recursive --jobs 2
+        run: git submodule update --init --recursive -j$(getconf _NPROCESSORS_ONLN)
 
       - name: Verify VS Project Files
         shell: powershell
