@@ -1,5 +1,5 @@
 /*  PCSX2 - PS2 Emulator for PCs
- *  Copyright (C) 2002-2010  PCSX2 Dev Team
+ *  Copyright (C) 2002-2021  PCSX2 Dev Team
  *
  *  PCSX2 is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU Lesser General Public License as published by the Free Software Found-
@@ -182,14 +182,12 @@ void Pcsx2App::AllocateCoreStuffs()
 			if (BaseException* ex = m_CpuProviders->GetException_MicroVU0())
 			{
 				scrollableTextArea->AppendText(L"* microVU0\n\t" + ex->FormatDisplayMessage() + L"\n\n");
-				recOps.UseMicroVU0 = false;
 				recOps.EnableVU0 = false;
 			}
 
 			if (BaseException* ex = m_CpuProviders->GetException_MicroVU1())
 			{
 				scrollableTextArea->AppendText(L"* microVU1\n\t" + ex->FormatDisplayMessage() + L"\n\n");
-				recOps.UseMicroVU1 = false;
 				recOps.EnableVU1 = false;
 			}
 
@@ -513,7 +511,7 @@ bool Pcsx2App::OnInit()
 		else if (Startup.SysAutoRunElf)
 		{
 			g_Conf->EmuOptions.UseBOOT2Injection = true;
-
+			g_Conf->Folders.RunELF = wxFileName(Startup.ElfFile).GetPath();
 			sApp.SysExecute(Startup.CdvdSource, Startup.ElfFile);
 		}
 		else if (Startup.SysAutoRunIrx)

@@ -178,6 +178,24 @@
     <Filter Include="System\Ps2\DEV9\ATA\Commands">
       <UniqueIdentifier>{9e9b52d7-7b1c-44b2-82d8-1e0d8085e7e0}</UniqueIdentifier>
     </Filter>
+    <Filter Include="System\Ps2\DEV9\InternalServers">
+      <UniqueIdentifier>{93da3d51-9457-4fde-b374-c2fbe4780f59}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="System\Ps2\DEV9\PacketReader">
+      <UniqueIdentifier>{57c4be94-9a2c-469b-9b02-b3b324857fc5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="System\Ps2\DEV9\PacketReader\IP">
+      <UniqueIdentifier>{a0723e13-c839-464d-8cfa-6c440ae03537}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="System\Ps2\DEV9\PacketReader\IP\UDP">
+      <UniqueIdentifier>{db2fc75d-6552-4991-9155-885abd8796e4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="System\Ps2\DEV9\PacketReader\IP\UDP\DHCP">
+      <UniqueIdentifier>{d426ae2b-9ad6-473d-adba-57b7bdac87db}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="System\Ps2\DEV9\PacketReader\IP\UDP\DNS">
+      <UniqueIdentifier>{229bf045-e378-4ec5-bdf8-43938762511e}</UniqueIdentifier>
+    </Filter>
     <Filter Include="System\Ps2\USB">
       <UniqueIdentifier>{df9de75c-2272-4f73-b2a0-4f9f492ba1e9}</UniqueIdentifier>
     </Filter>
@@ -659,12 +677,6 @@
     <ClCompile Include="..\..\gui\CpuUsageProvider.cpp">
       <Filter>AppHost</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\gui\CpuUsageProviderLnx.cpp">
-      <Filter>AppHost</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\gui\CpuUsageProviderMSW.cpp">
-      <Filter>AppHost</Filter>
-    </ClCompile>
     <ClCompile Include="..\..\gui\FrameForGS.cpp">
       <Filter>AppHost</Filter>
     </ClCompile>
@@ -1096,6 +1108,36 @@
     <ClCompile Include="..\..\DEV9\flash.cpp">
       <Filter>System\Ps2\DEV9</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\DEV9\InternalServers\DHCP_Server.cpp">
+      <Filter>System\Ps2\DEV9\InternalServers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\DEV9\PacketReader\IP\UDP\DHCP\DHCP_Options.cpp">
+      <Filter>System\Ps2\DEV9\PacketReader\IP\UDP\DHCP</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\DEV9\PacketReader\IP\UDP\DHCP\DHCP_Packet.cpp">
+      <Filter>System\Ps2\DEV9\PacketReader\IP\UDP\DHCP</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\DEV9\PacketReader\IP\UDP\DNS\DNS_Classes.cpp">
+      <Filter>System\Ps2\DEV9\PacketReader\IP\UDP\DNS</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\DEV9\PacketReader\IP\UDP\DNS\DNS_Packet.cpp">
+      <Filter>System\Ps2\DEV9\PacketReader\IP\UDP\DNS</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\DEV9\PacketReader\IP\UDP\UDP_Packet.cpp">
+      <Filter>System\Ps2\DEV9\PacketReader\IP\UDP</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\DEV9\PacketReader\IP\IP_Options.cpp">
+      <Filter>System\Ps2\DEV9\PacketReader\IP</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\DEV9\PacketReader\IP\IP_Packet.cpp">
+      <Filter>System\Ps2\DEV9\PacketReader\IP</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\DEV9\PacketReader\EthernetFrame.cpp">
+      <Filter>System\Ps2\DEV9\PacketReader</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\DEV9\PacketReader\NetLib.cpp">
+      <Filter>System\Ps2\DEV9\PacketReader</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\DEV9\pcap_io.cpp">
       <Filter>System\Ps2\DEV9</Filter>
     </ClCompile>
@@ -1314,6 +1356,9 @@
     </ClCompile>
     <ClCompile Include="..\..\CDVD\ChdFileReader.cpp">
       <Filter>System\ISO</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Recording\Utilities\InputRecordingLogger.cpp">
+      <Filter>Recording\Utilities</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -1848,10 +1893,55 @@
     <ClInclude Include="..\..\DEV9\DEV9.h">
       <Filter>System\Ps2\DEV9</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\DEV9\InternalServers\DHCP_Server.h">
+      <Filter>System\Ps2\DEV9\InternalServers</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\DEV9\net.h">
       <Filter>System\Ps2\DEV9</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\DEV9\PacketReader\IP\UDP\DHCP\DHCP_Options.h">
+      <Filter>System\Ps2\DEV9\PacketReader\IP\UDP\DHCP</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\DEV9\PacketReader\IP\UDP\DHCP\DHCP_Packet.h">
+      <Filter>System\Ps2\DEV9\PacketReader\IP\UDP\DHCP</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\DEV9\PacketReader\IP\UDP\DNS\DNS_Classes.h">
+      <Filter>System\Ps2\DEV9\PacketReader\IP\UDP\DNS</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\DEV9\PacketReader\IP\UDP\DNS\DNS_Enums.h">
+      <Filter>System\Ps2\DEV9\PacketReader\IP\UDP\DNS</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\DEV9\PacketReader\IP\UDP\DNS\DNS_Packet.h">
+      <Filter>System\Ps2\DEV9\PacketReader\IP\UDP\DNS</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\DEV9\PacketReader\IP\UDP\UDP_Packet.h">
+      <Filter>System\Ps2\DEV9\PacketReader\IP\UDP</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\DEV9\PacketReader\IP\IP_Address.h">
+      <Filter>System\Ps2\DEV9\PacketReader\IP</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\DEV9\PacketReader\IP\IP_Options.h">
+      <Filter>System\Ps2\DEV9\PacketReader\IP</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\DEV9\PacketReader\IP\IP_Packet.h">
+      <Filter>System\Ps2\DEV9\PacketReader\IP</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\DEV9\PacketReader\IP\IP_Payload.h">
+      <Filter>System\Ps2\DEV9\PacketReader\IP</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\DEV9\PacketReader\EthernetFrame.h">
+      <Filter>System\Ps2\DEV9\PacketReader</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\DEV9\PacketReader\NetLib.h">
+      <Filter>System\Ps2\DEV9\PacketReader</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\DEV9\PacketReader\Payload.h">
+      <Filter>System\Ps2\DEV9\PacketReader</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\DEV9\pcap_io.h">
+      <Filter>System\Ps2\DEV9</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\DEV9\SimpleQueue.h">
       <Filter>System\Ps2\DEV9</Filter>
     </ClInclude>
     <ClInclude Include="..\..\DEV9\smap.h">
@@ -2243,10 +2333,5 @@
     <Manifest Include="..\PCSX2.manifest">
       <Filter>AppHost\Resources</Filter>
     </Manifest>
-  </ItemGroup>
-  <ItemGroup>
-    <Image Include="..\..\gui\Resources\NoIcon.png">
-      <Filter>AppHost\Resources</Filter>
-    </Image>
   </ItemGroup>
 </Project>
