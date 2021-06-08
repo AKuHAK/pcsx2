@@ -57,8 +57,9 @@ jobs:
         if: steps.cache-submodules.outputs.cache-hit != 'true'
         run: |
           git submodule update --init --recursive -j $(getconf _NPROCESSORS_ONLN)
+          choco uninstall -f visualstudio2019buildtools
           choco install visualstudio2019buildtools --version=16.7.7.0 --force --allow-downgrade
-  # choco uninstall -f visualstudio2019buildtools
+          msbuild --version
 
       - name: Verify VS Project Files
         shell: powershell
@@ -74,6 +75,8 @@ jobs:
           # Set to 'true' to retain the .pdb / .exp / .lib, etc files which can be useful for repro'ing issues that only occur in the compiled .exe
           RetainDebuggingArtifacts: ${{ github.event.inputs.retainDebugArtifacts == 'true' }}
         run: |
+          choco uninstall -f visualstudio2019buildtools
+          choco install visualstudio2019buildtools --version=16.7.7.0 --force --allow-downgrade
           msbuild --version
           msbuild "buildbot.xml" /m /v:n /t:ReleaseAll /p:Platform=${{ matrix.platform }}
 
