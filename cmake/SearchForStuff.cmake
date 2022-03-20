@@ -247,7 +247,6 @@ if(QT_BUILD)
 	add_subdirectory(3rdparty/sdl2 EXCLUDE_FROM_ALL)
 endif()
 
-add_subdirectory(3rdparty/des)
 add_subdirectory(3rdparty/libchdr/libchdr EXCLUDE_FROM_ALL)
 target_compile_options(chdr-static PRIVATE "-w")
 

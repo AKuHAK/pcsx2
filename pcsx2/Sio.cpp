@@ -25,6 +25,8 @@
 #	include "Recording/InputRecording.h"
 #endif
 
+#include "ps2/BiosTools.h"
+#include "common/FileSystem.h"
 #include "des.h"
 
 _sio sio;
@@ -390,7 +392,8 @@ void generateResponse()
 {
 	uint8_t ChallengeIV[8] = { /* SHA256: e7b02f4f8d99a58b96dbca4db81c5d666ea7c46fbf6e1d5c045eaba0ee25416a */ };
 	char filename[1024];
-	snprintf(filename, sizeof(filename), "%s/%s", g_Conf->Folders.Bios.ToString().ToStdString().c_str(), "civ.bin");
+	std::string pathname(FileSystem::GetPathDirectory(BiosPath));
+	snprintf(filename, sizeof(filename), "%s%s", pathname.c_str(), "civ.bin");
 	FILE *f = fopen(filename, "rb");
 	if (f)
 	{

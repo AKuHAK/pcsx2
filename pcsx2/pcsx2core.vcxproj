@@ -335,6 +335,7 @@
     <ClCompile Include="VU1microInterp.cpp" />
     <ClCompile Include="VUflags.cpp" />
     <ClCompile Include="VUops.cpp" />
+    <ClCompile Include="des.cpp" />
     <ClCompile Include="Sif.cpp" />
     <ClCompile Include="Sif0.cpp" />
     <ClCompile Include="Sif1.cpp" />

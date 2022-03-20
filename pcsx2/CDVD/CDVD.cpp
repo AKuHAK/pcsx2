@@ -93,7 +93,10 @@ class ks_reg
 	uint16_t value;
 
 public:
-	ks_reg() {}
+	ks_reg()
+		: value(0)
+	{
+	}
 
 	operator uint16_t() { return g_EncryptedKeyStore[ks_index++]; }
 };
@@ -1063,7 +1066,8 @@ void cdvdReset()
 
 	{
 		char filename[1024];
-		snprintf(filename, sizeof(filename), "%s/%s", g_Conf->Folders.Bios.ToString().ToStdString().c_str(), "eks.bin");
+		std::string pathname(FileSystem::GetPathDirectory(BiosPath));
+		snprintf(filename, sizeof(filename), "%s%s", pathname.c_str(), "civ.bin");
 		FILE *f = fopen(filename, "rb");
 		if (f)
 		{
@@ -1074,7 +1078,8 @@ void cdvdReset()
 
 	{
 		char filename[1024];
-		snprintf(filename, sizeof(filename), "%s/%s", g_Conf->Folders.Bios.ToString().ToStdString().c_str(), "cks.bin");
+		std::string pathname(FileSystem::GetPathDirectory(BiosPath));
+		snprintf(filename, sizeof(filename), "%s%s", pathname.c_str(), "cks.bin");
 		FILE *f = fopen(filename, "rb");
 		if (f)
 		{
@@ -1085,7 +1090,8 @@ void cdvdReset()
 
 	{
 		char filename[1024];
-		snprintf(filename, sizeof(filename), "%s/%s", g_Conf->Folders.Bios.ToString().ToStdString().c_str(), "kek.bin");
+		std::string pathname(FileSystem::GetPathDirectory(BiosPath));
+		snprintf(filename, sizeof(filename), "%s%s", pathname.c_str(), "kek.bin");
 		FILE* f = fopen(filename, "rb");
 		if (f)
 		{
@@ -2500,7 +2506,7 @@ static MECHA_RESULT DecryptKelfHeader()
 
 	uint8_t HeaderSignature[8];
 	memset(HeaderSignature, 0, sizeof(HeaderSignature));
-	for (int i = 0; i < (headerSize & 0xFFFFFFF8); i += 8)
+	for (unsigned int i = 0; i < (headerSize & 0xFFFFFFF8); i += 8)
 	{
 		xor_bit(&cdvd.data_buffer[i], HeaderSignature, HeaderSignature, 8);
 		desEncrypt(g_keyStore.SignatureMasterKey, HeaderSignature);
@@ -2878,6 +2884,9 @@ static void executeMechaHandler()
 		case MECHA_STATE_DATA_IN_LENGTH_SET:
 		case MECHA_STATE_KELF_CONTENT_RECEIVED:
 			cdvd.mecha_result = DecryptKelfContent();
+			break;
+
+		default:
 			break;
 	}
 }
@@ -3486,7 +3495,10 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 								cdvd.mecha_state = MECHA_STATE_CRYPTO_DATA_RECVED;
 								executeMechaHandler();
 							}
-						break;
+							break;
+						
+						default:
+							break;
 					}
 					cdvd.SCMDResult[0] = 0;
 				}
@@ -3524,6 +3536,8 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 								break;
 							case MECHA_STATE_CRYPTO_DATA_OUT_SIZE_SET:
 								cdvd.mecha_state = MECHA_STATE_CRYPTO_KEYGEN_DONE;
+								break;							
+							default:
 								break;
 						}
 					}
@@ -3595,6 +3609,9 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 							cdvd.mecha_state = MECHA_STATE_READY;
 							cdvd.SCMDResult[0] = cdvd.mecha_errorcode;
 						}
+						break;
+
+					default:
 						break;
 				}
 				break;
