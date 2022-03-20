@@ -45,6 +45,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "fmt", "3rdparty\fmt\fmt.vcx
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "libsamplerate", "3rdparty\libsamplerate\libsamplerate.vcxproj", "{47AFDBEF-F15F-4BC0-B436-5BE443C3F80F}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "des", "3rdparty\des\des.vcxproj", "{EB12076D-4CEF-4D9D-8F34-5D0043798051}"
+EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "libchdr", "3rdparty\libchdr\libchdr.vcxproj", "{A0D2B3AD-1F72-4EE3-8B5C-F2C358DA35F0}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "jpgd", "3rdparty\jpgd\jpgd.vcxproj", "{ED2F21FD-0A36-4A8F-9B90-E7D92A2ACB63}"
