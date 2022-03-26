@@ -1,5 +1,3 @@
-# Workflow syntax:
-# https://help.github.com/en/articles/workflow-syntax-for-github-actions
 name: 👕 Check
 
 on:
@@ -13,7 +11,7 @@ jobs:
     steps:
       - uses: wolletd/clang-format-checker@v1
         with:
-          target-ref: main      # required, merge target
+          target-ref: patch-4      # required, merge target
           clang-version: 10     # optional, default: latest (in image)
           fetch-depth: 50       # optional, rarely needed, default: 50
           source-ref: HEAD      # optional, almost never needed, default: HEAD
