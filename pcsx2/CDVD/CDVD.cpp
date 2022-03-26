@@ -767,7 +767,7 @@ static uint cdvdRotationalLatency(CDVD_MODE_TYPE mode)
 					offset = layer1Start;
 				break;
 			default: // Pretty much every CD format
-				numSectors =                  360000;
+				numSectors =                 360000;
 				break;
 		}
 		const float sectorSpeed = (((float)(cdvd.SeekToSector - offset) / numSectors) * 0.60f) + 0.40f;

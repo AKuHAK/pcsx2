@@ -13,5 +13,7 @@ jobs:
     steps:
       - uses: wolletd/clang-format-checker@v1
         with:
-          target-ref: master    # required, merge target
-          clang-version: 12     # optional, default: latest (in image)
+          target-ref: main      # required, merge target
+          clang-version: 10     # optional, default: latest (in image)
+          fetch-depth: 50       # optional, rarely needed, default: 50
+          source-ref: HEAD      # optional, almost never needed, default: HEAD
