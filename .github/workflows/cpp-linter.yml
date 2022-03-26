@@ -1,17 +1,22 @@
-name: 👕 Check
+name: 👕 Check Formatting
 
 on:
   push:
   pull_request:
 
-
 jobs:
-  check-format:
+  format:
     runs-on: ubuntu-latest
     steps:
-      - uses: wolletd/clang-format-checker@v1
+      - uses: actions/checkout@v2
         with:
-          target-ref: patch-4      # required, merge target
-          clang-version: 10     # optional, default: latest (in image)
-          fetch-depth: 50       # optional, rarely needed, default: 50
-          source-ref: HEAD      # optional, almost never needed, default: HEAD
+          # check out HEAD on the branch
+          ref: ${{ github.head_ref }}
+          # make sure the parent commit is grabbed as well, because
+          # that's what will get formatted (i.e. the most recent commit)
+          fetch-depth: 2
+      # format the latest commit
+      - uses: purduesigbots/clang-format-action@1
+        # use one of clang-format's supported styles or leave this out to use the style in your .clang-format file
+        with:
+          style: file
