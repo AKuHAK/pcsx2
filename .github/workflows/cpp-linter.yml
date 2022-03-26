@@ -19,7 +19,7 @@ jobs:
           style: file
           version: 12
           thread-comments: true
-          tidy-checks: -*
+          # tidy-checks: -*
 
       - name: Fail fast?!
         if: steps.linter.outputs.checks-failed > 0
