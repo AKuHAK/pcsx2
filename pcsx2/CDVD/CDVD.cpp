@@ -1141,7 +1141,7 @@ __fi void cdvdReadInterrupt()
 
 		cdvd.Spinning = true;
 		cdvd.RetryCntP = 0;
-		cdvd.Reading =   1;
+		cdvd.Reading =    1;
 		cdvd.Readed = 1;
 		cdvd.Sector = cdvd.SeekToSector;
 		CDVD_LOG("Cdvd Seek Complete at iopcycle=%8.8x.", psxRegs.cycle);

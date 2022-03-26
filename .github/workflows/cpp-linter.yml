@@ -1,29 +1,18 @@
 # Workflow syntax:
 # https://help.github.com/en/articles/workflow-syntax-for-github-actions
-name: 👕 cpp-linter
+name: 👕 Check
 
 on:
   push:
   pull_request:
 
+name: CI-format-check
+
 jobs:
-  cpp-linter:
+  check-format:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: shenxianpeng/cpp-linter-action@master
-        id: linter
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: wolletd/clang-format-checker@v1
         with:
-          style: file
-          version: 12
-          thread-comments: true
-          # tidy-checks: -*
-
-      - name: Fail fast?!
-        if: steps.linter.outputs.checks-failed > 0
-        run: |
-          echo "Some files failed the linting checks!"
-        # for actual deployment
-        # run: exit 1
+          target-ref: master    # required, merge target
+          clang-version: 12     # optional, default: latest (in image)
