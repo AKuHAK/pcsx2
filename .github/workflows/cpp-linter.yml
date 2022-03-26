@@ -1,6 +1,6 @@
 # Workflow syntax:
 # https://help.github.com/en/articles/workflow-syntax-for-github-actions
-name: cpp-linter
+name: 👕 cpp-linter
 
 on:
   push:
@@ -13,12 +13,13 @@ jobs:
       - uses: actions/checkout@v2
       - uses: shenxianpeng/cpp-linter-action@master
         id: linter
-        # env:
-          # GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           style: file
           version: 12
-          thread-comments: false
+          thread-comments: true
+          tidy-checks: -*
 
       - name: Fail fast?!
         if: steps.linter.outputs.checks-failed > 0
