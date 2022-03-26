@@ -6,7 +6,6 @@ on:
   push:
   pull_request:
 
-name: CI-format-check
 
 jobs:
   check-format:
