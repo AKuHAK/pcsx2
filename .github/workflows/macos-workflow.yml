@@ -115,3 +115,8 @@ jobs:
       - name: Run Tests
         working-directory: build
         run: make -j$(getconf _NPROCESSORS_ONLN) unittests
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          path: /Users/runner/work/pcsx2/pcsx2/build/pcsx2/PCSX2.app
