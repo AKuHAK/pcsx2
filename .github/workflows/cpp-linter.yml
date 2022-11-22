@@ -1,0 +1,25 @@
+name: 👕 Check Formatting
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          # check out HEAD on the branch
+          ref: ${{ github.head_ref }}
+          # make sure the parent commit is grabbed as well, because
+          # that's what will get formatted (i.e. the most recent commit)
+          fetch-depth: 2
+      # format the latest commit
+
+      - name: Validate clang-format
+        run: |
+          clang-format-12 --version
+          clang-format-12 --dump-config
+          git clang-format-12 --style=file HEAD^ --diff
+          ./.github/workflows/scripts/validation/lint-clang-format/clang-format.sh
