@@ -164,6 +164,74 @@ static bool LoadBiosVersion(std::FILE* fp, u32& version, std::string& descriptio
 	return true;
 }
 
+static bool LoadDVDVersion(std::FILE* fp, u32& region, std::string& zone)
+{
+	romdir rd;
+	for (u32 i = 0; i < 512 * 1024; i++)
+	{
+		if (std::fread(&rd, sizeof(rd), 1, fp) != 1)
+			return false;
+
+		if (std::strncmp(rd.fileName, "RESET", sizeof(rd.fileName)) == 0)
+			break; /* found romdir */
+	}
+
+	s64 fileOffset = 0;
+	s64 fileSize = FileSystem::FSize64(fp);
+	bool foundDVDid = false;
+
+	// ensure it's a null-terminated and not zero-length string
+	while (rd.fileName[0] != '\0' && strnlen(rd.fileName, sizeof(rd.fileName)) != sizeof(rd.fileName))
+	{
+		if (std::strncmp(rd.fileName, "DVDID", sizeof(rd.fileName)) == 0)
+		{
+			char dvdid[5 + 1] = {}; // ascii version loaded from disk.
+
+			s64 pos = FileSystem::FTell64(fp);
+			if (FileSystem::FSeek64(fp, fileOffset, SEEK_SET) != 0 ||
+				std::fread(dvdid, 5, 1, fp) != 1 || FileSystem::FSeek64(fp, pos, SEEK_SET) != 0)
+			{
+				break;
+			}
+
+			switch (dvdid[4])
+			{
+				// clang-format off
+				case 'O': zone = "Oceania";region = 3;  break;
+				case 'R': zone = "Russia"; region = 5;  break;
+				case 'M': zone = "Mexico"; region = 7;  break;
+				// clang-format on
+			}
+
+			description = StringUtil::StdStringFromFormat("%-7s v%s.%s(%c%c/%c%c/%c%c%c%c)  %s",
+				zone.c_str(),
+				vermaj, vermin,
+				romver[12], romver[13], // day
+				romver[10], romver[11], // month
+				romver[6], romver[7], romver[8], romver[9], // year!
+				(romver[5] == 'C') ? "Console" : (romver[5] == 'D') ? "Devel" : "");
+
+			version = strtol(vermaj, (char**)NULL, 0) << 8;
+			version |= strtol(vermin, (char**)NULL, 0);
+			foundDVDid = true;
+
+			Console.WriteLn("Bios Found: %s", description.c_str());
+		}
+
+		if ((rd.fileSize % 0x10) == 0)
+			fileOffset += rd.fileSize;
+		else
+			fileOffset += (rd.fileSize + 0x10) & 0xfffffff0;
+
+		if (std::fread(&rd, sizeof(rd), 1, fp) != 1)
+			break;
+	}
+
+	fileOffset -= ((rd.fileSize + 0x10) & 0xfffffff0) - rd.fileSize;
+
+	return true;
+}
+
 template <size_t _size>
 void ChecksumIt(u32& result, const u8 (&srcdata)[_size])
 {
@@ -203,6 +271,8 @@ static void LoadExtraRom(const char* ext, u8 (&dest)[_size])
 		Console.Warning("BIOS Warning: %s could not be read (permission denied?)", ext);
 		return;
 	}
+
+
 	// Checksum for ROM1, ROM2?  Rama says no, Gigaherz says yes.  I'm not sure either way.  --air
 	//ChecksumIt( BiosChecksum, dest );
 }
