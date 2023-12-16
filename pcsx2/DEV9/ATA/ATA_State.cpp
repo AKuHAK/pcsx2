@@ -81,6 +81,19 @@ int ATA::Open(const std::string& hddPath)
 	ioThread = std::thread(&ATA::IO_Thread, this);
 	ioRunning = true;
 
+	// Use FileSystem::ReplaceExtension to get the hddid file path
+	std::string hddidPath = Path::ReplaceExtension(hddPath, "hddid");
+
+	// Open and read the content of the hddid file
+	std::optional<std::vector<u8>> fileContent = FileSystem::ReadBinaryFile(hddidPath.c_str());
+
+	if (fileContent.has_value() && fileContent.value().size() <= sizeof(sceSec))
+	{
+		// Copy the content to sceSec
+		memset(sceSec, 0, sizeof(sceSec)); // Clear sceSec
+		std::copy(fileContent.value().begin(), fileContent.value().end(), sceSec);
+	}
+
 	return 0;
 }
 
@@ -144,7 +157,7 @@ void ATA::InitSparseSupport(const std::string& hddPath)
 
 	/*  https://askbob.tech/the-ntfs-blog-sparse-and-compressed-file/
 	 *  NTFS Sparse Block Size are the same size as a compression unit
-	 *  Cluster Size    Compression Unit    
+	 *  Cluster Size    Compression Unit
 	 *  --------------------------------
 	 *  512bytes         8kb (0x02000)
 	 *    1kb           16kb (0x04000)
