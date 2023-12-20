@@ -394,6 +394,9 @@
    <property name="text">
     <string>&amp;Pause</string>
    </property>
+   <property name="shortcut">
+    <string>Space</string>
+   </property>
   </action>
   <action name="actionToolbarPause">
    <property name="checkable">
@@ -681,6 +684,9 @@
    <property name="text">
     <string>&amp;Screenshot</string>
    </property>
+   <property name="shortcut">
+    <string>F8</string>
+   </property>
   </action>
   <action name="actionToolbarScreenshot">
    <property name="icon">
@@ -932,6 +938,9 @@
    </property>
    <property name="text">
     <string>Save Single Frame GS Dump</string>
+   </property>
+   <property name="shortcut">
+    <string>Shift+F8</string>
    </property>
   </action>
   <action name="actionInputRecNew">
