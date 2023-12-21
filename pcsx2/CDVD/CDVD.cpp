@@ -84,7 +84,7 @@ uint32_t ks_index = 0;
 
 class ks_reg
 {
-	uint16_t value;
+	// uint16_t value;
 
 public:
 	ks_reg() {}
@@ -102,11 +102,11 @@ uint16_t g_MemoryCardKeyIndexes[72] = {
 
 uint16_t g_KelfKeysIndex[4] = { 0x110, 0x110, 0xC4, 0x15C };
 
-uint16_t g_cardKeyStore[48] = {
-	/* SHA256: 04bcc6b13827829fb5cc8dbd86420d30f69a2bfd3b7719398b341e15368bd365 */
+uint16_t g_cardKeyStore[96] = {
+	/* SHA256: fef2015096181409b25fb4c4cd0e0fc48ca73c6ea845c0ed785c06bf9becd84e */
 };
 
-uint8_t g_KeyStoreKey[16] = { /* SHA256: 04bcc6b13827829fb5cc8dbd86420d30f69a2bfd3b7719398b341e15368bd365 */ };
+uint8_t g_KeyStoreKey[16] = { /* SHA256: f7c9233b37a7662a882eca096f43b35af74b3de6030c1ad5185692332e96aecb */ };
 
 uint8_t MG_IV_NULL[8] = { 0 };
 
@@ -2988,7 +2988,7 @@ static MECHA_RESULT DecryptKelfContent()
 
 static void executeMechaHandler()
 {
-	switch(cdvd.mecha_state)
+	switch (cdvd.mecha_state)
 	{
 		case MECHA_STATE_CARD_NONCE_SET:
 			cdvd.mecha_result = generateCardChallenge();
@@ -3007,6 +3007,8 @@ static void executeMechaHandler()
 		case MECHA_STATE_DATA_IN_LENGTH_SET:
 		case MECHA_STATE_KELF_CONTENT_RECEIVED:
 			cdvd.mecha_result = DecryptKelfContent();
+			break;
+		default:
 			break;
 	}
 }
@@ -3614,7 +3616,9 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 								cdvd.mecha_state = MECHA_STATE_CRYPTO_DATA_RECVED;
 								executeMechaHandler();
 							}
-						break;
+							break;
+						default:
+							break;
 					}
 					cdvd.SCMDResultBuff[0] = 0;
 				}
@@ -3652,6 +3656,8 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 								break;
 							case MECHA_STATE_CRYPTO_DATA_OUT_SIZE_SET:
 								cdvd.mecha_state = MECHA_STATE_CRYPTO_KEYGEN_DONE;
+								break;
+							default:
 								break;
 						}
 					}
@@ -3723,6 +3729,8 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 							cdvd.mecha_state = MECHA_STATE_READY;
 							cdvd.SCMDResultBuff[0] = cdvd.mecha_errorcode;
 						}
+						break;
+					default:
 						break;
 				}
 				break;
