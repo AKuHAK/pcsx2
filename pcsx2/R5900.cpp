@@ -65,7 +65,7 @@ meaning that only the first 13 game arguments supplied by the user can be added 
 In fast boot mode, 15 arguments can fit because the only call to EELOAD is "<ELF> <<args>>". */
 const int kMaxArgs = 16;
 uptr g_argPtrs[kMaxArgs];
-#define DEBUG_LAUNCHARG 0 // show lots of helpful console messages as the launch arguments are passed to the game
+#define DEBUG_LAUNCHARG 1 // show lots of helpful console messages as the launch arguments are passed to the game
 
 void cpuReset()
 {
