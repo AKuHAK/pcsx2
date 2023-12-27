@@ -244,7 +244,10 @@ static void cdvdCreateNewNVM(std::FILE* fp)
 
 	constexpr u8 ILinkID_Data[8] = {0x00, 0xAC, 0xFF, 0xFF, 0xFF, 0xFF, 0xB9, 0x86};
 	std::fseek(fp, nvmLayout->ilinkId, SEEK_SET);
-	std::fwrite(&ILinkID_Data[0], sizeof(ILinkID_Data), 1, fp);
+	if (ILinkIDData[0] == 0)
+		std::fwrite(&ILinkID_Data[0], sizeof(ILinkID_Data), 1, fp);
+	else
+		std::fwrite(&ILinkIDData[0], sizeof(ILinkIDData), 1, fp);
 	if (nvmlayouts[1].biosVer <= BiosVersion)
 	{
 		constexpr u8 ILinkID_checksum[2] = {0x00, 0x18};
@@ -352,7 +355,10 @@ static void cdvdWriteConsoleID(const u8* id)
 
 static void cdvdReadILinkID(u8* id)
 {
-	getNvmData(id, 0, 8, offsetof(NVMLayout, ilinkId));
+	if (ILinkIDData[0] == 0)
+		getNvmData(id, 0, 8, offsetof(NVMLayout, ilinkId));
+	else
+		std::memcpy(id, ILinkIDData, 8);
 }
 static void cdvdWriteILinkID(const u8* id)
 {

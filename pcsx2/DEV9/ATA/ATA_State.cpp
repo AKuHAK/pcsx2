@@ -21,6 +21,7 @@
 
 #include "ATA.h"
 #include "DEV9/DEV9.h"
+#include "CDVD/CDVD.h"
 
 #if _WIN32
 #include "pathcch.h"
@@ -105,6 +106,13 @@ int ATA::Open(const std::string& hddPath)
 		// 0x50 - 0x80 is a random unique block of data
 		// 0x80 and up - zero filled
 	}
+
+	// Open and read the content of the hddid file
+	std::string IlinkIdPath = Path::ReplaceExtension(hddPath, "ilinkid");
+	std::optional<std::vector<u8>> IlinkIdContent = FileSystem::ReadBinaryFile(IlinkIdPath.c_str());
+
+	if (IlinkIdContent.has_value() && IlinkIdContent.value().size() <= sizeof(ILinkIDData))
+		std::copy(IlinkIdContent.value().begin(), IlinkIdContent.value().end(), ILinkIDData);
 
 	//Store HddImage size for later use
 	hddImageSize = static_cast<u64>(size);

@@ -163,6 +163,7 @@ private:
 	//Smart
 
 	u8 sceSec[256 * 2] = {0};
+    u8 ILinkIDData[8] = {0};
 
 public:
 	ATA();
