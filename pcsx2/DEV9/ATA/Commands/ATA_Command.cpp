@@ -70,9 +70,6 @@ void ATA::IDE_ExecCmd(u16 value)
 			/* This command is Sony-specific and isn't part of the IDE standard */
 			/* The Sony HDD has a modified firmware that supports this command */
 			/* Sending this command to a standard HDD will give an error */
-			/* We roughly emulate it to make programs think the HDD is a Sony one */
-			/* However, we only send null, if anyting checks the returned data */
-			/* it will fail */
 		case 0x8E:
 			HDD_SCE();
 			break;
@@ -116,13 +113,12 @@ bool ATA::PreCmd()
 
 void ATA::IDE_CmdLBA48Transform(bool islba48)
 {
-	lba48 = islba48;
 	//TODO
 	/* handle the 'magic' 0 nsector count conversion here. to avoid
              * fiddling with the rest of the read logic, we just store the
              * full sector count in ->nsector
              */
-	if (!lba48)
+	if (!islba48)
 	{
 		if (regNsector == 0)
 			nsector = 256;

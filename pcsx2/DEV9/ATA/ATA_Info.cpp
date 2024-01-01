@@ -34,8 +34,16 @@ void ATA::CreateHDDinfo(u64 sizeSectors)
 {
 	//PS2 is limited to 32bit size HDD (2TB), however,
 	//we don't yet support 48bit, so limit to 28bit size
-	constexpr u32 maxSize = (1 << 28) - 1; // 128Gb
-	sizeSectors = std::min<u32>(sizeSectors, maxSize);
+	if (!(lba48Supported))
+	{
+		constexpr u32 maxSize = (1 << 28) - 1; // 128Gb
+		sizeSectors = std::min<u32>(sizeSectors, maxSize);
+	}
+	else
+	{
+		constexpr u64 maxSize = (1ULL << 48) - 1; // 2Tb
+		sizeSectors = std::min(sizeSectors, maxSize);
+	}
 
 	constexpr u16 sectorSize = 512;
 	DevCon.WriteLn("DEV9: HddSize : %i", sizeSectors * sectorSize / (1024 * 1024));
@@ -43,198 +51,164 @@ void ATA::CreateHDDinfo(u64 sizeSectors)
 	DevCon.WriteLn("DEV9: nbSectors : %i", nbSectors);
 
 	memset(&identifyData, 0, sizeof(identifyData));
-	//Defualt CHS translation
-	constexpr u16 defHeads = 16;
-	constexpr u16 defSectors = 63;
-	u64 cylinderslong = std::min<u64>(nbSectors, 16514064) / defHeads / defSectors;
-	const u16 defCylinders = (u16)std::min<u64>(cylinderslong, UINT16_MAX);
-
-	//Curent CHS translation
-	cylinderslong = std::min<u64>(nbSectors, 16514064) / curHeads / curSectors;
-	curCylinders = (u16)std::min<u64>(cylinderslong, UINT16_MAX);
-
-	const int curOldsize = curCylinders * curHeads * curSectors;
-	//SET MAX ADDRESS will set the nbSectors reported
 
 	//General configuration bit-significant information:
-	/*
-	 * 0x848A is for CFA devices
-	 * bit 0: Resv                                          (all?)
-	 * bit 1: Hard Sectored                                 (ATA-1)
-	 * bit 2: Soft Sectored                                 (ATA-1) / Response incomplete (ATA-5,6,7,8)
-	 * bit 3: Not MFM encoded                               (ATA-1)
-	 * bit 4: Head switch time > 15 usec                    (ATA-1)
-	 * bit 5: Spindle motor control option implemented      (ATA-1)
-	 * bit 6: Non-Removable (Obsolete)                      (ATA-1,2,3,4,5)
-	 * bit 7: Removable                                     (ATA-1,2,3,4,5,6,7,8)
-	 * bit 8: disk transfer rate > 10Mbs                    (ATA-1)
-	 * bit 9: disk transfer rate > 5Mbs but <= 10Mbs        (ATA-1)
-	 * bit 10: disk transfer rate <= 5Mbs                   (ATA-1)
-	 * bit 11: rotational speed tolerance is > 0.5%         (ATA-1)
-	 * bit 12: data strobe offset option available          (ATA-1)
-	 * bit 13: track offset option available                (ATA-1)
-	 * bit 14: format speed tolerance gap required          (ATA-1)
-	 * bit 15: 0 = ATA dev                                  (All?)
+	/* ATA-7
+	 * bit 0: Reserved
+	 * bit 1: Retired
+	 * bit 2: Response incomplete
+	 * bit 3-5: Retired
+	 * bit 6: Obsolete
+	 * bit 7: Removable media
+	 * bit 8-14: Retired
+	 * bit 15: 0 = ATA device
 	 */
 	int index = 0;
 	WriteUInt16(identifyData, &index, 0x0040); //word 0
-	//Default Num of cylinders
-	WriteUInt16(identifyData, &index, defCylinders); //word 1
-	//Specific configuration
-	index += 1 * 2; //word 2
-	//Default Num of heads (Retired)
-	WriteUInt16(identifyData, &index, defHeads); //word 3
-	//Number of unformatted bytes per track (Retired)
-	WriteUInt16(identifyData, &index, static_cast<u16>(sectorSize * defSectors)); //word 4
-	//Number of unformatted bytes per sector (Retired)
-	WriteUInt16(identifyData, &index, sectorSize); //word 5
-	//Default Number of sectors per track (Retired)
-	WriteUInt16(identifyData, &index, defSectors); //word 6
+	//Obsolete
+	WriteUInt16(identifyData, &index, 0x3fff); //word 1
+	//Specific configuration, c837: Device does not require SET FEATURES subcommand to spin-up after power-up and IDENTIFY DEVICE data is complete
+	WriteUInt16(identifyData, &index, 0xc837); //word 2
+	//Obsolete
+	WriteUInt16(identifyData, &index, 0x0010); //word 3
+	//Retired
+	index += 2 * 2; //word 4-5
+	//Obsolete
+	WriteUInt16(identifyData, &index, 0x003f); //word 6
 	//Reserved for assignment by the CompactFlash™ Association
 	index += 2 * 2; //word 7-8
 	//Retired
 	index += 1 * 2; //word 9
 	//Serial number (20 ASCII characters)
-	WritePaddedString(identifyData, &index, "PCSX2-DEV9-ATA-HDD", 20); //word 10-19
-	//Buffer(cache) type (Retired)
-	WriteUInt16(identifyData, &index, /*3*/ 0); //word 20
-	//Buffer(cache) size in sectors (Retired)
-	WriteUInt16(identifyData, &index, /*512*/ 0); //word 21
-	//Number of ECC bytes available on read / write long commands (Obsolete)
-	WriteUInt16(identifyData, &index, /*4*/ 0); //word 22
+	WritePaddedString(identifyData, &index, "CPXS-2ED9VA-ATH-DD", 20); //word 10-19
+	//Retired
+	WriteUInt32(identifyData, &index, 0x10000300); //word 20-21
+	//Obsolete
+	WriteUInt16(identifyData, &index, 0x0039); //word 22
 	//Firmware revision (8 ASCII characters)
-	WritePaddedString(identifyData, &index, "FIRM100", 8); //word 23-26
+	WritePaddedString(identifyData, &index, "IFMR01 0", 8); //word 23-26
 	//Model number (40 ASCII characters)
-	WritePaddedString(identifyData, &index, "PCSX2-DEV9-ATA-HDD", 40); //word 27-46
-	//READ/WRITE MULI max sectors
-	WriteUInt16(identifyData, &index, 128 & (0x80 << 8)); //word 47
-	//Dword IO supported
-	WriteUInt16(identifyData, &index, 1); //word 48
+	WritePaddedString(identifyData, &index, "CPXS-2ED9VA-ATH-DD", 40); //word 27-46
+	//READ/WRITE MULI max sectors (16 sectors)
+	WriteUInt16(identifyData, &index, 16 & (0x80 << 8)); //word 47
+	//Reserved
+	WriteUInt16(identifyData, &index, 0); //word 48
 	//Capabilities
 	/*
 	 * bits 7-0: Retired
-	 * bit 8: DMA supported
-	 * bit 9: LBA supported
-	 * bit 10:IORDY may be disabled
-	 * bit 11:IORDY supported
-	 * bit 12:Reserved
-	 * bit 13:Standby timer values as specified in this standard are supported
+	 * bit 8: DMA supported, 1
+	 * bit 9: LBA supported, 1
+	 * bit 10:IORDY may be disabled, 1
+	 * bit 11:IORDY supported, 1
+	 * bit 12:Reserved, 0
+	 * bit 13:Standby timer values as specified in this standard are supported, 1
 	 */
-	WriteUInt16(identifyData, &index, ((1 << 11) | (1 << 9) | (1 << 8))); //word 49
-	//Capabilities (0-Shall be set to one to indicate a device specific Standby timer value minimum)
-	index += 1 * 2; //word 50
-	//PIO data transfer cycle timing mode (Obsolete)
-	WriteUInt16(identifyData, &index, static_cast<u8>((pioMode > 2 ? pioMode : 2) << 8)); //word 51
-	//DMA data transfer cycle timing mode (Obsolete)
-	WriteUInt16(identifyData, &index, 0); //word 52
+	WriteUInt16(identifyData, &index, ((1 << 13) | (1 << 11) | (1 << 10) | (1 << 9) | (1 << 8))); //word 49
+	//Capabilities (bit 14: 1, bit 0-Shall be set to one to indicate a device specific Standby timer value minimum)
+	WriteUInt16(identifyData, &index, 1 << 14); //word 50
+	//Obsolete
+	WriteUInt16(identifyData, &index, 0x0200); //word 51
+	//Obsolete
+	index += 1 * 2; //word 52
 	//
 	/*
-	 * bit 0: Fields in 54:58 are valid (CHS sizes)(Obsolete)
+	 * bit 0: Obsolete
 	 * bit 1: Fields in 64:70 are valid (pio3,4 and MWDMA info)
 	 * bit 2: Fields in 88 are valid    (UDMA modes)
 	 */
 	WriteUInt16(identifyData, &index, (1 | (1 << 1) | (1 << 2))); //word 53
-	//Number of current cylinders
-	WriteUInt16(identifyData, &index, curCylinders); //word 54
-	//Number of current heads
-	WriteUInt16(identifyData, &index, curHeads); //word 55
-	//Number of current sectors per track
-	WriteUInt16(identifyData, &index, curSectors); //word 56
-	//Current capacity in sectors
-	WriteUInt32(identifyData, &index, static_cast<u32>(curOldsize)); //word 57-58
+	//Obsolete, Word (58:54)
+	WriteUInt32(identifyData, &index, 0x00103fff);
+	WriteUInt32(identifyData, &index, 0xfc10003f);
+	WriteUInt16(identifyData, &index, 0x00fb);
 	//PIO READ/WRITE Multiple setting
 	/*
 	 * bit 7-0: Current setting for number of logical sectors that shall be transferred per DRQ
 	 *			data block on READ/WRITE Multiple commands
 	 * bit 8: Multiple sector setting is valid
 	 */
-	WriteUInt16(identifyData, &index, static_cast<u16>(curMultipleSectorsSetting | (1 << 8))); //word 59
+	WriteUInt16(identifyData, &index, (16 | (1 << 8))); //word 59, 16 from word 47
 	//Total number of user addressable logical sectors
-	WriteUInt32(identifyData, &index, static_cast<u32>(nbSectors < 268435456 ? nbSectors : 268435456)); //word 60-61
-	//DMA modes
-	/*
-	 * bits 0-7: Singleword modes supported (0,1,2)
-	 * bits 8-15: Transfer mode active
-	 */
-	if (sdmaMode > 0)
-		WriteUInt16(identifyData, &index, static_cast<u16>(0x07 | (1 << (sdmaMode + 8)))); //word 62
-	else
-		WriteUInt16(identifyData, &index, 0x07); //word 62
-	//DMA Modes
+	WriteUInt32(identifyData, &index, static_cast<u32>(nbSectors)); //word 60-61
+	// Obsolete
+	index += 1 * 2; //word 62
+	//MDMA Modes
 	/*
 	 * bits 0-7: Multiword modes supported (0,1,2)
 	 * bits 8-15: Transfer mode active
 	 */
-	if (mdmaMode > 0)
-		WriteUInt16(identifyData, &index, static_cast<u16>(0x07 | (1 << (mdmaMode + 8)))); //word 63
+	DevCon.WriteLn("mdmaMode: " + std::to_string(mdmaMode));
+	DevCon.WriteLn("index: " + std::to_string(index / 2));
+
+	if (mdmaMode >= 0)
+		WriteUInt16(identifyData, &index, static_cast<u16>(0x07 | (1 << (mdmaMode + 8)))); //word 63, 0x0007
 	else
 		WriteUInt16(identifyData, &index, 0x07); //word 63
-	//Bit 0-7-PIO modes supported (0,1,2,3,4)
-	WriteUInt16(identifyData, &index, 0x1F); //word 64 (pio3,4 supported) selection not reported here
-	//Minimum Multiword DMA transfer cycle time per word
-	WriteUInt16(identifyData, &index, 80); //word 65
-	//Manufacturer’s recommended Multiword DMA transfer cycle time
-	WriteUInt16(identifyData, &index, 80); //word 66
-	//Minimum PIO transfer cycle time without flow control
-	WriteUInt16(identifyData, &index, 120); //word 67
-	//Minimum PIO transfer cycle time with IORDY flow control
-	WriteUInt16(identifyData, &index, 120); //word 68
+	//Bits 0-1-PIO modes supported (3,4)
+	WriteUInt16(identifyData, &index, 0x03); //word 64 (pio3,4 supported)
+	//Minimum Multiword DMA transfer cycle time per word, 120ns
+	WriteUInt16(identifyData, &index, 0x78); //word 65
+	//Manufacturer’s recommended Multiword DMA transfer cycle time, 120ns
+	WriteUInt16(identifyData, &index, 0x78); //word 66
+	//Minimum PIO transfer cycle time without flow control, 120ns
+	WriteUInt16(identifyData, &index, 0x78); //word 67
+	//Minimum PIO transfer cycle time with IORDY flow control, 120ns
+	WriteUInt16(identifyData, &index, 0x78); //word 68
 	//Reserved
-	//69-70
-	//Reserved
-	//71-74
-	//Queue depth (4bit, Maximum queue depth - 1)
-	//75
-	//Reserved
+	//69-74
+	//Queue depth (4bit, Maximum queue depth - 1), not supported
+	index = 75 * 2;
+	WriteUInt16(identifyData, &index, 0); //word 75
+	//Reserved for sata
 	//76-79
 	index = 80 * 2;
-	//Major revision number (1-3-Obsolete, 4-7-ATA4-7 supported)
-	WriteUInt16(identifyData, &index, 0x70); //word 80
-	//Minor revision number
-	WriteUInt16(identifyData, &index, 0); //word 81
+	//Major revision number (supports ATA/ATAPI-6, ATA/ATAPI-5, ATA/ATAPI-4)
+	WriteUInt16(identifyData, &index, ((1 << 6) | (1 << 5) | (1 << 4) | 0xe)); //word 80
+	//Minor revision number, 0x18 - ATA/ATAPI-6 T13 1410D revision 0
+	WriteUInt16(identifyData, &index, 0x18); //word 81, 0x0018
 	//Supported Feature Sets (82)
 	/*
-	 * bit 0: Smart
-	 * bit 1: Security Mode
-	 * bit 2: Removable media feature set
-	 * bit 3: Power management
-	 * bit 4: Packet (the CD features)
-	 * bit 5: Write cache
-	 * bit 6: Look-ahead
-	 * bit 7: Release interrupt
-	 * bit 8: SERVICE interrupt
-	 * bit 9: DEVICE RESET interrupt
-	 * bit 10: Host Protected Area
-	 * bit 11: (Obsolete)
-	 * bit 12: WRITE BUFFER command
-	 * bit 13: READ BUFFER command
-	 * bit 14: NOP
-	 * bit 15: (Obsolete)
+	 * bit 0: Smart, 1
+	 * bit 1: Security Mode, 1
+	 * bit 2: Removable media feature set, 0
+	 * bit 3: Power management, 1
+	 * bit 4: Packet (the CD features), 0
+	 * bit 5: Write cache, 1
+	 * bit 6: Look-ahead, 1
+	 * bit 7: Release interrupt, 0
+	 * bit 8: SERVICE interrupt, 0
+	 * bit 9: DEVICE RESET interrupt, 1
+	 * bit 10: Host Protected Area, 1
+	 * bit 11: (Obsolete), 1
+	 * bit 12: WRITE BUFFER command, 1
+	 * bit 13: READ BUFFER command, 1
+	 * bit 14: NOP, 1
+	 * bit 15: (Obsolete), 0
 	 */
-	WriteUInt16(identifyData, &index, static_cast<u16>((1 << 14) | (1 << 5) | /*(1 << 1) | (1 << 10) |*/ 1)); //word 82
+	WriteUInt16(identifyData, &index, ((1 << 14) | (1 << 13) | (1 << 12) | (1 << 11) | (1 << 10) | (1 << 6) | (1 << 5) | (1 << 3) | (1 << 1) | (fetSmartEnabled << 0))); //word 82
 	//Supported Feature Sets (83)
 	/*
-	 * bit 0: DOWNLOAD MICROCODE
-	 * bit 1: READ/WRITE DMA QUEUED
-	 * bit 2: CFA (Card reader)
-	 * bit 3: Advanced Power Management
-	 * bit 4: Removable Media Status Notifications
-	 * bit 5: Power-Up Standby
-	 * bit 6: SET FEATURES required to spin up after power-up
-	 * bit 7: ??
-	 * bit 8: SET MAX security extension
-	 * bit 9: Automatic Acoustic Management
-	 * bit 10: 48bit LBA
-	 * bit 11: Device Configuration Overlay
-	 * bit 12: FLUSH CACHE
-	 * bit 13: FLUSH CACHE EXT
+	 * bit 0: DOWNLOAD MICROCODE, 1
+	 * bit 1: READ/WRITE DMA QUEUED, 0
+	 * bit 2: CFA (Card reader), 0
+	 * bit 3: Advanced Power Management, 1
+	 * bit 4: Removable Media Status Notifications, 0
+	 * bit 5: Power-Up Standby, 0
+	 * bit 6: SET FEATURES required to spin up after power-up, 0
+	 * bit 7: ??, 0
+	 * bit 8: SET MAX security extension, 1
+	 * bit 9: Automatic Acoustic Management, 1
+	 * bit 10: 48bit LBA, 0
+	 * bit 11: Device Configuration Overlay, 1
+	 * bit 12: FLUSH CACHE, 0
+	 * bit 13: FLUSH CACHE EXT, 0
 	 * bit 14: 1
 	 */
-	WriteUInt16(identifyData, &index, static_cast<u16>((1 << 14) | (1 << 13) | (1 << 12) /*| (1 << 8)*/ | ((lba48Supported ? 1 : 0) << 10))); //word 83
+	WriteUInt16(identifyData, &index, ((1 << 14) | (1 << 11) | (lba48Supported << 10) | (1 << 9) | (1 << 8) | (1 << 3) | 1)); //word 83, 0x4b09
 	//Supported Feature Sets (84)
 	/*
-	 * bit 0: Smart error logging
-	 * bit 1: smart self-test
+	 * bit 0: Smart error logging, 1
+	 * bit 1: smart self-test, 1
 	 * bit 2: Media serial number
 	 * bit 3: Media Card Pass Though
 	 * bit 4: Streaming feature set
@@ -247,59 +221,63 @@ void ATA::CreateHDDinfo(u64 sizeSectors)
 	 * bit 13: IDLE IMMEDIATE with UNLOAD FEATURE
 	 * bit 14: 1
 	 */
-	WriteUInt16(identifyData, &index, static_cast<u16>((1 << 14) | (1 << 1) | 1)); //word 84
+	WriteUInt16(identifyData, &index, static_cast<u16>((1 << 14) | (1 << 1) | 1)); //word 84, 0x4003
+
 	//Command set/feature enabled/supported (See word 82)
-	WriteUInt16(identifyData, &index, static_cast<u16>((fetSmartEnabled << 0) | (fetSecurityEnabled << 1) | (fetWriteCacheEnabled << 5) | (fetHostProtectedAreaEnabled << 10) | (1 << 14))); //Fixed      //word 85
+	WriteUInt16(identifyData, &index, ((1 << 14) | (1 << 13) | (1 << 12) | (1 << 11) | (fetHostProtectedAreaEnabled << 10) | (fetLookAheadEnabled << 6) | (fetWriteCacheEnabled << 5) | (1 << 3) | (fetSecurityEnabled << 1) | (fetSmartEnabled << 0))); //word 85
+
 	//Command set/feature enabled/supported (See word 83)
-	// clang-format off
-	WriteUInt16(identifyData, &index, static_cast<u16>(
-		/*(1 << 8) |						//SET MAX */
-		((lba48Supported ? 1 : 0) << 10) |	//Fixed
-		(1 << 12) |							//Fixed
-		(1 << 13)));						//Fixed      //word 86
+	// clang-format ofvbnf
+	WriteUInt16(identifyData, &index, static_cast<u16>((1 << 11) | //Fixed
+													   (lba48Supported << 10) | (1 << 9) | (1 << 0))); //Fixed      //word 86, todo 0x0a01
 	//Command set/feature enabled/supported (See word 84)
 	WriteUInt16(identifyData, &index, static_cast<u16>((1 << 14) | (1 << 1) | 1));
-	WriteUInt16(identifyData, &index, static_cast<u16>(
-		(1) |								//Fixed
-		((1) << 1)));						//Fixed      //word 87
-	// clang-format on
+	// WriteUInt16(identifyData, &index, static_cast<u16>(
+	//	(1) |								//Fixed
+	//	((1) << 1)));						//Fixed      //word 87, todo 0x4003
+	// clang-format ofgfn
 	//UDMA modes
 	/*
-	 * bits 0-7: ultraword modes supported (0,1,2,4,5,6,7)
+	 * bits 0-7: ultraword modes supported (0,1,2,4,5,6)
 	 * bits 8-15: Transfer mode active
 	 */
-	if (udmaMode > 0)
-		WriteUInt16(identifyData, &index, static_cast<u16>(0x7f | (1 << (udmaMode + 8)))); //word 88
+	DevCon.WriteLn("udmaMode: " + std::to_string(udmaMode));
+	DevCon.WriteLn("index: " + std::to_string(index / 2));
+
+	if (udmaMode >= 0)
+		WriteUInt16(identifyData, &index, static_cast<u16>(0x3f | (1 << (udmaMode + 8)))); //word 88, UDMA 5 supported
 	else
-		WriteUInt16(identifyData, &index, 0x7f); //word 88
+		WriteUInt16(identifyData, &index, 0x3f); //word 88
 	//Time required for security erase unit completion
-	//89
+	//89, zeroed
 	//Time required for Enhanced security erase completion
-	//90
+	//90, zeroed
 	//Current advanced power management value
-	//91
+	//91, zeroed
 	//Master Password Identifier
 	//92
+	index = 92 * 2;
+	WriteUInt16(identifyData, &index, 0xfffe); //word 92,
 	//Hardware reset result. The contents of bits (12:0) of this word shall change only during the execution of a hardware reset.
 	/*
-	 * bit 0: 1
-	 * bit 1-2: How Dev0 determined Dev number (11 = unk)
-	 * bit 3: Dev 0 Passes Diag
-	 * bit 4: Dev 0 Detected assertion of PDIAG
-	 * bit 5: Dev 0 Detected assertion of DSAP
-	 * bit 6: Dev 0 Responds when Dev1 is selected
-	 * bit 7: Reserved
-	 * bit 8: 1
-	 * bit 9-10: How Dev1 determined Dev number
-	 * bit 11: Dev1 asserted 1
-	 * bit 12: Reserved
-	 * bit 13: Dev detected CBLID above Vih
+	 * bit 0: SMART1
+	 * bit 1-2: How Dev0 determined Dev number (01 = Jumper)
+	 * bit 3: Dev 0 Passes Diag, 1
+	 * bit 4: Dev 0 Detected assertion of PDIAG, 0
+	 * bit 5: Dev 0 Detected assertion of DSAP, 0
+	 * bit 6: Dev 0 Responds when Dev1 is selected, 0
+	 * bit 7: Reserved, 0
+	 * bit 8: 0
+	 * bit 9-10: How Dev1 determined Dev number, 0
+	 * bit 11: Dev1 asserted, 0
+	 * bit 12: Reserved, 0
+	 * bit 13: Dev detected CBLID above Vih, 1
 	 * bit 14: 1
 	 */
-	index = 93 * 2;
-	WriteUInt16(identifyData, &index, static_cast<u16>(1 | (1 << 14) | 0x2000)); //word 93
+	WriteUInt16(identifyData, &index, 0x600b); //word 93, 0x600b
 	//Vendor’s recommended acoustic management value.
-	//94
+	WriteUInt16(identifyData, &index, 0xc0fe); //word 94, 0xc0fe
+
 	//Stream Minimum Request Size
 	//95
 	//Streaming Transfer Time - DMA
@@ -309,10 +287,13 @@ void ATA::CreateHDDinfo(u64 sizeSectors)
 	//Streaming Performance Granularity
 	//98-99
 	//Total Number of User Addressable Sectors for the 48-bit Address feature set.
-	index = 100 * 2;
-	WriteUInt64(identifyData, &index, static_cast<u16>(nbSectors));
-	index -= 2;
-	WriteUInt16(identifyData, &index, 0); //truncate to 48bits
+	if (lba48Supported)
+	{
+		index = 100 * 2;
+		WriteUInt64(identifyData, &index, nbSectors); //word 100-103
+		index = 100 * 2;
+		WriteUInt16(identifyData, &index, 0); //truncate to 48bits (word 100 = 0)
+	}
 	//Streaming Transfer Time - PIO
 	//104
 	//Reserved
@@ -324,8 +305,8 @@ void ATA::CreateHDDinfo(u64 sizeSectors)
 	 * bit 13: multiple logical sectors per physical sector
 	 * bit 14: 1
 	 */
-	index = 106 * 2;
-	WriteUInt16(identifyData, &index, static_cast<u16>((1 << 14) | 0));
+	// index = 106 * 2;
+	// WriteUInt16(identifyData, &index, static_cast<u16>((1 << 14) | 0)); // word 106, zero
 	//Inter-seek delay for ISO-7779acoustic testing in microseconds
 	//107
 	//WNN
@@ -365,7 +346,7 @@ void ATA::CreateHDDinfo(u64 sizeSectors)
 	//15:8 Checksum, 7:0 Signature
 	CreateHDDinfoCsum();
 }
-void ATA::CreateHDDinfoCsum() //Is this correct?
+void ATA::CreateHDDinfoCsum()
 {
 	u8 counter = 0;
 

@@ -39,7 +39,6 @@ void ATA::HDD_InitDevParameters()
 	DevCon.WriteLn("DEV9: HDD_InitDevParameters");
 
 	curSectors = regNsector;
-	curHeads = static_cast<u8>((regSelect & 0x7) + 1);
 	PostCmdNoData();
 }
 
@@ -95,42 +94,25 @@ void ATA::HDD_SetFeatures()
 			const u16 xferMode = static_cast<u16>(regNsector); //Set Transfer mode
 
 			const int mode = xferMode & 0x07;
+			mdmaMode = -1;
+			udmaMode = -1;
 			switch ((xferMode) >> 3)
 			{
 				case 0x00: //pio default
 					//if mode = 1, disable IORDY
 					DevCon.WriteLn("DEV9: PIO Default");
 					pioMode = 4;
-					sdmaMode = -1;
-					mdmaMode = -1;
-					udmaMode = -1;
 					break;
 				case 0x01: //pio mode (3,4)
 					DevCon.WriteLn("DEV9: PIO Mode %i", mode);
 					pioMode = mode;
-					sdmaMode = -1;
-					mdmaMode = -1;
-					udmaMode = -1;
-					break;
-				case 0x02: //Single word dma mode (0,1,2)
-					DevCon.WriteLn("DEV9: SDMA Mode %i", mode);
-					//pioMode = -1;
-					sdmaMode = mode;
-					mdmaMode = -1;
-					udmaMode = -1;
 					break;
 				case 0x04: //Multi word dma mode (0,1,2)
 					DevCon.WriteLn("DEV9: MDMA Mode %i", mode);
-					//pioMode = -1;
-					sdmaMode = -1;
 					mdmaMode = mode;
-					udmaMode = -1;
 					break;
 				case 0x08: //Ulta dma mode (0,1,2,3,4,5,6)
 					DevCon.WriteLn("DEV9: UDMA Mode %i", mode);
-					//pioMode = -1;
-					sdmaMode = -1;
-					mdmaMode = -1;
 					udmaMode = mode;
 					break;
 				default:

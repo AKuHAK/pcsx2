@@ -19,8 +19,8 @@ class ATA
 public:
 	//Transfer
 	bool dmaReady = false;
-	int nsector = 0;     //sector count
-	int nsectorLeft = 0; //sectors left to transfer
+	u32 nsector = 0; //sector count
+	u32 nsectorLeft = 0; //sectors left to transfer
 private:
 	const bool lba48Supported = false;
 
@@ -40,15 +40,10 @@ private:
 #endif
 
 	int pioMode;
-	int sdmaMode;
 	int mdmaMode;
 	int udmaMode;
 
 	//Info
-	u8 curHeads = 16;
-	u8 curSectors = 63;
-	u16 curCylinders = 0;
-
 	u8 curMultipleSectorsSetting = 128;
 
 	u8 identifyData[512] = {0};

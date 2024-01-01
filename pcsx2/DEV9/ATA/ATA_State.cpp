@@ -294,29 +294,16 @@ void ATA::ResetBegin()
 }
 void ATA::ResetEnd(bool hard)
 {
-	curHeads = 16;
 	curSectors = 63;
-	curCylinders = 0;
 	curMultipleSectorsSetting = 128;
 
 	//UDMA Mode setting is preserved
 	//across SRST
+	pioMode = 4;
 	if (hard)
-	{
-		pioMode = 4;
-		sdmaMode = -1;
-		mdmaMode = 2;
 		udmaMode = -1;
-	}
-	else
-	{
-		pioMode = 4;
-		if (udmaMode == -1)
-		{
-			sdmaMode = -1;
-			mdmaMode = 2;
-		}
-	}
+	if (udmaMode == -1)
+		mdmaMode = 2;
 
 	regControlEnableIRQ = false;
 	HDD_ExecuteDeviceDiag();
@@ -541,8 +528,6 @@ s64 ATA::HDD_GetLBA()
 		regError |= static_cast<u8>(ATA_ERR_ABORT);
 
 		Console.Error("DEV9: ATA: Tried to get LBA address while LBA mode disabled");
-		//(c.Nh + h).Ns+(s-1)
-		//s64 CHSasLBA = ((regLcyl + (regHcyl << 8)) * curHeads + (regSelect & 0x0F)) * curSectors + (regSector - 1);
 		return -1;
 	}
 }
@@ -579,15 +564,13 @@ void ATA::HDD_SetLBA(s64 sectorNum)
 
 bool ATA::HDD_CanSeek()
 {
-	int sectors = 0;
+	u64 sectors = 0;
 	return HDD_CanAccess(&sectors);
 }
 
-bool ATA::HDD_CanAccess(int* sectors)
+bool ATA::HDD_CanAccess(u64* sectors)
 {
-	s64 maxLBA = hddImageSize / 512 - 1;
-	if ((regSelect & 0x40) == 0) //CHS mode
-		maxLBA = std::min<s64>(maxLBA, curCylinders * curHeads * curSectors);
+	u64 maxLBA = hddImageSize / 512 ? hddImageSize / 512 - 1 : 0;
 
 	const s64 posStart = HDD_GetLBA();
 	if (posStart == -1)
