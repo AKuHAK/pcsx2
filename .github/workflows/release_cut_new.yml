@@ -9,7 +9,7 @@ name: 🏭 Create Release
 on:
   push:
     branches:
-      - master
+      - docker
   workflow_dispatch:
     inputs:
       is_prelease:
@@ -29,7 +29,7 @@ permissions:
 
 jobs:
   cut-release:
-    if: github.repository == 'PCSX2/pcsx2'
+    if: github.repository == 'AKuHAK/pcsx2'
     name: "Create Tag and Release"
     runs-on: ubuntu-latest
     outputs:
@@ -88,7 +88,7 @@ jobs:
   # Build Everything
   # Linux
   build_linux_qt:
-    if: github.repository == 'PCSX2/pcsx2'
+    if: github.repository == 'AKuHAK/pcsx2'
     needs:
       - cut-release
     name: "Linux"
@@ -104,7 +104,7 @@ jobs:
     secrets: inherit
 
   build_linux_flatpak:
-    if: github.repository == 'PCSX2/pcsx2'
+    if: github.repository == 'AKuHAK/pcsx2'
     needs:
       - cut-release
     name: "Linux"
@@ -122,7 +122,7 @@ jobs:
 
   # Windows
   build_windows_qt:
-    if: github.repository == 'PCSX2/pcsx2'
+    if: github.repository == 'AKuHAK/pcsx2'
     needs:
       - cut-release
     name: "Windows"
@@ -139,7 +139,7 @@ jobs:
 
   # MacOS
   build_macos_qt:
-    if: github.repository == 'PCSX2/pcsx2'
+    if: github.repository == 'AKuHAK/pcsx2'
     needs:
       - cut-release
     name: "MacOS"
@@ -153,7 +153,7 @@ jobs:
 
   # Upload the Artifacts
   upload_artifacts:
-    if: github.repository == 'PCSX2/pcsx2'
+    if: github.repository == 'AKuHAK/pcsx2'
     needs:
       - cut-release
       - build_linux_flatpak

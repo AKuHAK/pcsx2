@@ -7,7 +7,7 @@ on:
 
 jobs:
   check:
-    if: github.repository == 'PCSX2/pcsx2'
+    if: github.repository == 'AKuHAK/pcsx2'
     name: "Check if release is needed"
     runs-on: ubuntu-latest
     outputs:

@@ -11,7 +11,7 @@ on:
 jobs:
   build_linux_qt:
     name: "AppImage"
-    if: github.repository != 'PCSX2/pcsx2' || github.event_name == 'pull_request'
+    if: github.repository != 'AKuHAK/pcsx2' || github.event_name == 'pull_request'
     uses: ./.github/workflows/linux_build_qt.yml
     with:
       jobName: "AppImage Build"
@@ -22,7 +22,7 @@ jobs:
     secrets: inherit
   build_linux_flatpak:
     name: "Flatpak"
-    if: github.repository != 'PCSX2/pcsx2' || github.event_name == 'pull_request'
+    if: github.repository != 'AKuHAK/pcsx2' || github.event_name == 'pull_request'
     uses: ./.github/workflows/linux_build_flatpak.yml
     with:
       jobName: "Flatpak Build"
