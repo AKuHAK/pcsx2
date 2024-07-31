@@ -86,6 +86,7 @@ if(ENABLE_TESTS)
 	endif()
 endif()
 
+add_subdirectory(3rdparty/des EXCLUDE_FROM_ALL)
 add_subdirectory(3rdparty/rapidyaml/rapidyaml EXCLUDE_FROM_ALL)
 add_subdirectory(3rdparty/lzma EXCLUDE_FROM_ALL)
 add_subdirectory(3rdparty/libchdr EXCLUDE_FROM_ALL)
