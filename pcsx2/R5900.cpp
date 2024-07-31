@@ -80,6 +80,7 @@ void cpuReset()
 
 	AllowParams1 = !VMManager::Internal::IsFastBootInProgress();
 	AllowParams2 = !VMManager::Internal::IsFastBootInProgress();
+	ParamsRead = false;
 
 	g_eeloadMain = 0;
 	g_eeloadExec = 0;
@@ -369,11 +370,33 @@ __fi void _cpuEventTest_Shared()
 	if (cpuIntsEnabled(mask))
 		cpuException(mask, cpuRegs.branch);
 
+	// ---- IOP -------------
+	// * It's important to run a iopEventTest before calling ExecuteBlock. This
+	//   is because the IOP does not always perform branch tests before returning
+	//   (during the prev branch) and also so it can act on the state the EE has
+	//   given it before executing any code.
+	//
+	// * The IOP cannot always be run.  If we run IOP code every time through the
+	//   cpuEventTest, the IOP generally starts to run way ahead of the EE.
 
-	// ---- Counters -------------
-	// Important: the vsync counter must be the first to be checked.  It includes emulation
-	// escape/suspend hooks, and it's really a good idea to suspend/resume emulation before
-	// doing any actual meaningful branchtest logic.
+	// It's also important to sync up the IOP before updating the timers, since gates will depend on starting/stopping in the right place!
+	EEsCycle += cpuRegs.cycle - EEoCycle;
+	EEoCycle = cpuRegs.cycle;
+
+	if (EEsCycle > 0)
+		iopEventAction = true;
+
+	if (iopEventAction)
+	{
+		//if( EEsCycle < -450 )
+		//	Console.WriteLn( " IOP ahead by: %d cycles", -EEsCycle );
+
+		EEsCycle = psxCpu->ExecuteBlock(EEsCycle);
+
+		iopEventAction = false;
+	}
+
+	iopEventTest();
 
 	if (cpuTestCycle(nextsCounter, nextCounter))
 	{
@@ -401,33 +424,6 @@ __fi void _cpuEventTest_Shared()
 		else
 			_cpuTestInterrupts();
 	}
-
-	// ---- IOP -------------
-	// * It's important to run a iopEventTest before calling ExecuteBlock. This
-	//   is because the IOP does not always perform branch tests before returning
-	//   (during the prev branch) and also so it can act on the state the EE has
-	//   given it before executing any code.
-	//
-	// * The IOP cannot always be run.  If we run IOP code every time through the
-	//   cpuEventTest, the IOP generally starts to run way ahead of the EE.
-
-	EEsCycle += cpuRegs.cycle - EEoCycle;
-	EEoCycle = cpuRegs.cycle;
-
-	if (EEsCycle > 0)
-		iopEventAction = true;
-
-	if (iopEventAction)
-	{
-		//if( EEsCycle < -450 )
-		//	Console.WriteLn( " IOP ahead by: %d cycles", -EEsCycle );
-
-		EEsCycle = psxCpu->ExecuteBlock(EEsCycle);
-
-		iopEventAction = false;
-	}
-
-	iopEventTest();
 
 	// ---- VU Sync -------------
 	// We're in a EventTest.  All dynarec registers are flushed
@@ -715,6 +711,16 @@ void eeloadHook()
 	}
 
 	VMManager::Internal::ELFLoadingOnCPUThread(std::move(elfname));
+
+	if (CHECK_EXTRAMEM)
+	{
+		// Map extra memory.
+		vtlb_VMap(Ps2MemSize::MainRam, Ps2MemSize::MainRam, Ps2MemSize::ExtraRam);
+
+		// Map RAM mirrors for extra memory.
+		vtlb_VMap(0x20000000 | Ps2MemSize::MainRam, Ps2MemSize::MainRam, Ps2MemSize::ExtraRam);
+		vtlb_VMap(0x30000000 | Ps2MemSize::MainRam, Ps2MemSize::MainRam, Ps2MemSize::ExtraRam);
+	}
 }
 
 // Called from recompilers; define is mandatory.

@@ -10,12 +10,13 @@
 #include "Config.h"
 #include "GS.h"
 #include "CDVD/CDVDcommon.h"
+#include "Host.h"
+#include "Host/AudioStream.h"
 #include "SIO/Memcard/MemoryCardFile.h"
 #include "SIO/Pad/Pad.h"
 #include "USB/USB.h"
 
 #include "fmt/format.h"
-
 #ifdef _WIN32
 #include "common/RedtapeWindows.h"
 #include <KnownFolders.h>
@@ -167,10 +168,7 @@ namespace EmuFolders
 	std::string InputProfiles;
 	std::string Videos;
 
-	static void SetAppRoot();
-	static void SetResourcesDirectory();
 	static bool ShouldUsePortableMode();
-	static void SetDataDirectory();
 } // namespace EmuFolders
 
 TraceFiltersEE::TraceFiltersEE()
@@ -515,6 +513,7 @@ Pcsx2Config::CpuOptions::CpuOptions()
 	VU0FPCR = DEFAULT_VU_FP_CONTROL_REGISTER;
 	VU1FPCR = DEFAULT_VU_FP_CONTROL_REGISTER;
 	AffinityControlMode = 0;
+	ExtraMemory = false;
 }
 
 void Pcsx2Config::CpuOptions::ApplySanityCheck()
@@ -529,13 +528,13 @@ void Pcsx2Config::CpuOptions::LoadSave(SettingsWrapper& wrap)
 	SettingsWrapSection("EmuCore/CPU");
 
 	const auto read_fpcr = [&wrap, &CURRENT_SETTINGS_SECTION](FPControlRegister& fpcr, std::string_view prefix) {
-		fpcr.SetDenormalsAreZero(wrap.EntryBitBool(CURRENT_SETTINGS_SECTION, TinyString::from_fmt("{}.DenormalsAreZero", prefix),
+		fpcr.SetDenormalsAreZero(wrap.EntryBitBool(CURRENT_SETTINGS_SECTION, TinyString::from_format("{}.DenormalsAreZero", prefix),
 			fpcr.GetDenormalsAreZero(), fpcr.GetDenormalsAreZero()));
-		fpcr.SetFlushToZero(wrap.EntryBitBool(CURRENT_SETTINGS_SECTION, TinyString::from_fmt("{}.DenormalsAreZero", prefix),
+		fpcr.SetFlushToZero(wrap.EntryBitBool(CURRENT_SETTINGS_SECTION, TinyString::from_format("{}.DenormalsAreZero", prefix),
 			fpcr.GetFlushToZero(), fpcr.GetFlushToZero()));
 
 		uint round_mode = static_cast<uint>(fpcr.GetRoundMode());
-		wrap.Entry(CURRENT_SETTINGS_SECTION, TinyString::from_fmt("{}.Roundmode", prefix), round_mode, round_mode);
+		wrap.Entry(CURRENT_SETTINGS_SECTION, TinyString::from_format("{}.Roundmode", prefix), round_mode, round_mode);
 		round_mode = std::min(round_mode, static_cast<uint>(FPRoundMode::MaxCount) - 1u);
 		fpcr.SetRoundMode(static_cast<FPRoundMode>(round_mode));
 	};
@@ -546,6 +545,7 @@ void Pcsx2Config::CpuOptions::LoadSave(SettingsWrapper& wrap)
 	read_fpcr(VU1FPCR, "VU1");
 
 	SettingsWrapEntry(AffinityControlMode);
+	SettingsWrapBitBool(ExtraMemory);
 
 	Recompiler.LoadSave(wrap);
 }
@@ -988,6 +988,7 @@ void Pcsx2Config::GSOptions::MaskUserHacks()
 	UserHacks_HalfPixelOffset = GSHalfPixelOffset::Off;
 	UserHacks_RoundSprite = 0;
 	UserHacks_AutoFlush = GSHWAutoFlushLevel::Disabled;
+	GPUPaletteConversion = false;
 	PreloadFrameWithGSData = false;
 	UserHacks_DisablePartialInvalidation = false;
 	UserHacks_DisableDepthSupport = false;
@@ -1027,10 +1028,42 @@ bool Pcsx2Config::GSOptions::UseHardwareRenderer() const
 	return (Renderer != GSRendererType::Null && Renderer != GSRendererType::SW);
 }
 
+static constexpr const std::array s_spu2_sync_mode_names = {
+	"Disabled",
+	"TimeStretch"
+};
+static constexpr const std::array s_spu2_sync_mode_display_names = {
+	TRANSLATE_NOOP("Pcsx2Config", "Disabled (Noisy)"),
+	TRANSLATE_NOOP("Pcsx2Config", "TimeStretch (Recommended)"),
+};
+
+const char* Pcsx2Config::SPU2Options::GetSyncModeName(SPU2SyncMode mode)
+{
+	return (static_cast<size_t>(mode) < s_spu2_sync_mode_names.size()) ? s_spu2_sync_mode_names[static_cast<size_t>(mode)] : "";
+}
+
+const char* Pcsx2Config::SPU2Options::GetSyncModeDisplayName(SPU2SyncMode mode)
+{
+	return (static_cast<size_t>(mode) < s_spu2_sync_mode_display_names.size()) ?
+			   Host::TranslateToCString("Pcsx2Config", s_spu2_sync_mode_display_names[static_cast<size_t>(mode)]) :
+			   "";
+}
+
+std::optional<Pcsx2Config::SPU2Options::SPU2SyncMode> Pcsx2Config::SPU2Options::ParseSyncMode(const char* name)
+{
+	for (u8 i = 0; i < static_cast<u8>(SPU2SyncMode::Count); i++)
+	{
+		if (std::strcmp(name, s_spu2_sync_mode_names[i]) == 0)
+			return static_cast<SPU2SyncMode>(i);
+	}
+
+	return std::nullopt;
+}
+
+
 Pcsx2Config::SPU2Options::SPU2Options()
 {
 	bitset = 0;
-	OutputModule = "cubeb";
 }
 
 void Pcsx2Config::SPU2Options::LoadSave(SettingsWrapper& wrap)
@@ -1044,7 +1077,6 @@ void Pcsx2Config::SPU2Options::LoadSave(SettingsWrapper& wrap)
 		SettingsWrapBitBoolEx(MsgVoiceOff, "Show_Messages_Voice_Off");
 		SettingsWrapBitBoolEx(MsgDMA, "Show_Messages_DMA_Transfer");
 		SettingsWrapBitBoolEx(MsgAutoDMA, "Show_Messages_AutoDMA");
-		SettingsWrapBitBoolEx(MsgOverruns, "Show_Messages_Overruns");
 		SettingsWrapBitBoolEx(MsgCache, "Show_Messages_CacheStats");
 
 		SettingsWrapBitBoolEx(AccessLog, "Log_Register_Access");
@@ -1063,7 +1095,6 @@ void Pcsx2Config::SPU2Options::LoadSave(SettingsWrapper& wrap)
 			MsgVoiceOff = false;
 			MsgDMA = false;
 			MsgAutoDMA = false;
-			MsgOverruns = false;
 			MsgCache = false;
 			AccessLog = false;
 			DMALog = false;
@@ -1073,28 +1104,19 @@ void Pcsx2Config::SPU2Options::LoadSave(SettingsWrapper& wrap)
 			RegDump = false;
 		}
 	}
-	{
-		SettingsWrapSection("SPU2/Mixing");
-
-		SettingsWrapEntry(FinalVolume);
-	}
 
 	{
 		SettingsWrapSection("SPU2/Output");
-
-		SettingsWrapEntry(OutputModule);
-		SettingsWrapEntry(BackendName);
+		SettingsWrapEntry(OutputVolume);
+		SettingsWrapEntry(FastForwardVolume);
+		SettingsWrapEntry(OutputMuted);
+		SettingsWrapParsedEnum(Backend, "Backend", &AudioStream::ParseBackendName, &AudioStream::GetBackendName);
+		SettingsWrapParsedEnum(SyncMode, "SyncMode", &ParseSyncMode, &GetSyncModeName);
+		SettingsWrapEntry(DriverName);
 		SettingsWrapEntry(DeviceName);
-		SettingsWrapEntry(Latency);
-		SettingsWrapEntry(OutputLatency);
-		SettingsWrapBitBool(OutputLatencyMinimal);
-		SynchMode = static_cast<SynchronizationMode>(wrap.EntryBitfield(CURRENT_SETTINGS_SECTION, "SynchMode", static_cast<int>(SynchMode), static_cast<int>(SynchMode)));
-		SettingsWrapEntry(SpeakerConfiguration);
-		SettingsWrapEntry(DplDecodingLevel);
+		StreamParameters.LoadSave(wrap, CURRENT_SETTINGS_SECTION);
 	}
-
-	// clampy clamp
-}
+	}
 
 bool Pcsx2Config::SPU2Options::operator!=(const SPU2Options& right) const
 {
@@ -1104,21 +1126,12 @@ bool Pcsx2Config::SPU2Options::operator!=(const SPU2Options& right) const
 bool Pcsx2Config::SPU2Options::operator==(const SPU2Options& right) const
 {
 	return OpEqu(bitset) &&
-
-		   OpEqu(SynchMode) &&
-
-		   OpEqu(FinalVolume) &&
-		   OpEqu(Latency) &&
-		   OpEqu(OutputLatency) &&
-		   OpEqu(SpeakerConfiguration) &&
-		   OpEqu(DplDecodingLevel) &&
-
-		   OpEqu(SequenceLenMS) &&
-		   OpEqu(SeekWindowMS) &&
-		   OpEqu(OverlapMS) &&
-
-		   OpEqu(OutputModule) &&
-		   OpEqu(BackendName) &&
+		   OpEqu(OutputVolume) &&
+		   OpEqu(FastForwardVolume) &&
+		   OpEqu(OutputMuted) &&
+		   OpEqu(Backend) &&
+		   OpEqu(StreamParameters) &&
+		   OpEqu(DriverName) &&
 		   OpEqu(DeviceName);
 }
 
@@ -1475,7 +1488,6 @@ Pcsx2Config::EmulationSpeedOptions::EmulationSpeedOptions()
 {
 	bitset = 0;
 
-	FrameLimitEnable = true;
 	SyncToHostRefreshRate = false;
 }
 
@@ -1845,26 +1857,28 @@ void Pcsx2Config::ClearConfiguration(SettingsInterface* dest_si)
 	temp.LoadSaveCore(wrapper);
 }
 
-bool EmuFolders::InitializeCriticalFolders()
+void EmuFolders::SetAppRoot()
 {
-	SetAppRoot();
-	SetResourcesDirectory();
-	SetDataDirectory();
+	const std::string program_path = FileSystem::GetProgramPath();
+	Console.WriteLnFmt("Program Path: {}", program_path);
+
+	AppRoot = Path::Canonicalize(Path::GetDirectory(program_path));
 
 	// logging of directories in case something goes wrong super early
-	Console.WriteLn("AppRoot Directory: %s", AppRoot.c_str());
-	Console.WriteLn("DataRoot Directory: %s", DataRoot.c_str());
-	Console.WriteLn("Resources Directory: %s", Resources.c_str());
+	Console.WriteLnFmt("AppRoot Directory: {}", AppRoot);
+}
 
-	// allow SetDataDirectory() to change settings directory (if we want to split config later on)
-	if (Settings.empty())
-	{
-		Settings = Path::Combine(DataRoot, "inis");
+bool EmuFolders::SetResourcesDirectory()
+{
+#ifndef __APPLE__
+	// On Windows/Linux, these are in the binary directory.
+	Resources = Path::Combine(AppRoot, "resources");
+#else
+	// On macOS, this is in the bundle resources directory.
+	Resources = Path::Canonicalize(Path::Combine(AppRoot, "../Resources"));
+#endif
 
-		// Create settings directory if it doesn't exist. If we're not using portable mode, it won't.
-		if (!FileSystem::DirectoryExists(Settings.c_str()))
-			FileSystem::CreateDirectoryPath(Settings.c_str(), false);
-	}
+	Console.WriteLnFmt("Resources Directory: {}", Resources);
 
 	// the resources directory should exist, bail out if not
 	if (!FileSystem::DirectoryExists(Resources.c_str()))
@@ -1876,87 +1890,65 @@ bool EmuFolders::InitializeCriticalFolders()
 	return true;
 }
 
-void EmuFolders::SetAppRoot()
-{
-	const std::string program_path = FileSystem::GetProgramPath();
-	Console.WriteLn("Program Path: %s", program_path.c_str());
-
-	AppRoot = Path::Canonicalize(Path::GetDirectory(program_path));
-}
-
-void EmuFolders::SetResourcesDirectory()
-{
-#ifndef __APPLE__
-	// On Windows/Linux, these are in the binary directory.
-	Resources = Path::Combine(AppRoot, "resources");
-#else
-	// On macOS, this is in the bundle resources directory.
-	Resources = Path::Canonicalize(Path::Combine(AppRoot, "../Resources"));
-#endif
-}
-
 bool EmuFolders::ShouldUsePortableMode()
 {
 	// Check whether portable.ini exists in the program directory.
 	return FileSystem::FileExists(Path::Combine(AppRoot, "portable.ini").c_str()) || FileSystem::FileExists(Path::Combine(AppRoot, "portable.txt").c_str());
 }
 
-void EmuFolders::SetDataDirectory()
+bool EmuFolders::SetDataDirectory(Error* error)
 {
-	if (ShouldUsePortableMode())
+	if (!ShouldUsePortableMode())
 	{
-		DataRoot = AppRoot;
-		return;
-	}
-
 #if defined(_WIN32)
-	// On Windows, use My Documents\PCSX2 to match old installs.
-	PWSTR documents_directory;
-	if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Documents, 0, NULL, &documents_directory)))
-	{
-		if (std::wcslen(documents_directory) > 0)
-			DataRoot = Path::Combine(StringUtil::WideStringToUTF8String(documents_directory), "PCSX2");
-		CoTaskMemFree(documents_directory);
-	}
+		// On Windows, use My Documents\PCSX2 to match old installs.
+		PWSTR documents_directory;
+		if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Documents, 0, NULL, &documents_directory)))
+		{
+			if (std::wcslen(documents_directory) > 0)
+				DataRoot = Path::Combine(StringUtil::WideStringToUTF8String(documents_directory), "PCSX2");
+			CoTaskMemFree(documents_directory);
+		}
 #elif defined(__linux__) || defined(__FreeBSD__)
-	// Use $XDG_CONFIG_HOME/PCSX2 if it exists.
-	const char* xdg_config_home = getenv("XDG_CONFIG_HOME");
-	if (xdg_config_home && Path::IsAbsolute(xdg_config_home))
-	{
-		DataRoot = Path::RealPath(Path::Combine(xdg_config_home, "PCSX2"));
-	}
-	else
-	{
-		// Use ~/PCSX2 for non-XDG, and ~/.config/PCSX2 for XDG.
+		// Use $XDG_CONFIG_HOME/PCSX2 if it exists.
+		const char* xdg_config_home = getenv("XDG_CONFIG_HOME");
+		if (xdg_config_home && Path::IsAbsolute(xdg_config_home))
+		{
+			DataRoot = Path::RealPath(Path::Combine(xdg_config_home, "PCSX2"));
+		}
+		else
+		{
+			// Use ~/PCSX2 for non-XDG, and ~/.config/PCSX2 for XDG.
+			const char* home_dir = getenv("HOME");
+			if (home_dir)
+			{
+				// ~/.config should exist, but just in case it doesn't and this is a fresh profile..
+				const std::string config_dir(Path::Combine(home_dir, ".config"));
+				if (!FileSystem::DirectoryExists(config_dir.c_str()))
+					FileSystem::CreateDirectoryPath(config_dir.c_str(), false);
+
+				DataRoot = Path::RealPath(Path::Combine(config_dir, "PCSX2"));
+			}
+		}
+#elif defined(__APPLE__)
+		static constexpr char MAC_DATA_DIR[] = "Library/Application Support/PCSX2";
 		const char* home_dir = getenv("HOME");
 		if (home_dir)
-		{
-			// ~/.config should exist, but just in case it doesn't and this is a fresh profile..
-			const std::string config_dir(Path::Combine(home_dir, ".config"));
-			if (!FileSystem::DirectoryExists(config_dir.c_str()))
-				FileSystem::CreateDirectoryPath(config_dir.c_str(), false);
-
-			DataRoot = Path::RealPath(Path::Combine(config_dir, "PCSX2"));
-		}
-	}
-#elif defined(__APPLE__)
-	static constexpr char MAC_DATA_DIR[] = "Library/Application Support/PCSX2";
-	const char* home_dir = getenv("HOME");
-	if (home_dir)
-		DataRoot = Path::RealPath(Path::Combine(home_dir, MAC_DATA_DIR));
+			DataRoot = Path::RealPath(Path::Combine(home_dir, MAC_DATA_DIR));
 #endif
-
-	// make sure it exists
-	if (!DataRoot.empty() && !FileSystem::DirectoryExists(DataRoot.c_str()))
-	{
-		// we're in trouble if we fail to create this directory... but try to hobble on with portable
-		if (!FileSystem::CreateDirectoryPath(DataRoot.c_str(), false))
-			DataRoot.clear();
 	}
 
-	// couldn't determine the data directory? fallback to portable.
+	// couldn't determine the data directory, or using portable mode? fallback to portable.
 	if (DataRoot.empty())
 		DataRoot = AppRoot;
+
+	// inis is always below the data root
+	Settings = Path::Combine(DataRoot, "inis");
+
+	// make sure it exists
+	Console.WriteLnFmt("DataRoot Directory: {}", DataRoot);
+	return (FileSystem::EnsureDirectoryExists(DataRoot.c_str(), false, error) &&
+			FileSystem::EnsureDirectoryExists(Settings.c_str(), false, error));
 }
 
 void EmuFolders::SetDefaults(SettingsInterface& si)

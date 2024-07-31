@@ -247,15 +247,12 @@ set(pcsx2CDVDHeaders
 set(pcsx2SPU2Sources
 	SPU2/ADSR.cpp
 	SPU2/Debug.cpp
-	SPU2/DplIIdecoder.cpp
 	SPU2/Dma.cpp
 	SPU2/Mixer.cpp
 	SPU2/spu2.cpp
 	SPU2/ReadInput.cpp
 	SPU2/RegTable.cpp
 	SPU2/Reverb.cpp
-	SPU2/SndOut.cpp
-	SPU2/SndOut_Cubeb.cpp
 	SPU2/spu2freeze.cpp
 	SPU2/spu2sys.cpp
 	SPU2/Wavedump_wav.cpp
@@ -270,20 +267,11 @@ set(pcsx2SPU2Headers
 	SPU2/Debug.h
 	SPU2/defs.h
 	SPU2/Dma.h
-	SPU2/Global.h
 	SPU2/interpolate_table.h
-	SPU2/Mixer.h
 	SPU2/spu2.h
 	SPU2/regs.h
-	SPU2/SndOut.h
 	SPU2/spdif.h
 )
-
-if(WIN32)
-	list(APPEND pcsx2SPU2Sources
-		SPU2/SndOut_XAudio2.cpp
-	)
-endif()
 
 # DEV9 sources
 set(pcsx2DEV9Sources
@@ -385,6 +373,7 @@ set(pcsx2USBSources
 	USB/qemu-usb/input-keymap-qcode-to-qnum.cpp
 	USB/qemu-usb/usb-ohci.cpp
 	USB/shared/ringbuffer.cpp
+	USB/usb-eyetoy/cam-jpeg.cpp
 	USB/usb-eyetoy/jo_mpeg.cpp
 	USB/usb-eyetoy/usb-eyetoy-webcam.cpp
 	USB/usb-hid/usb-hid.cpp
@@ -414,6 +403,7 @@ set(pcsx2USBHeaders
 	USB/qemu-usb/queue.h
 	USB/qemu-usb/qusb.h
 	USB/shared/ringbuffer.h
+	USB/usb-eyetoy/cam-jpeg.h
 	USB/usb-eyetoy/jo_mpeg.h
 	USB/usb-eyetoy/ov519.h
 	USB/usb-eyetoy/usb-eyetoy-webcam.h
@@ -460,11 +450,9 @@ set(pcsx2GSSourcesUnshared
 	GS/Renderers/Common/GSVertexTraceFMM.cpp
 	GS/Renderers/HW/GSRendererHWMultiISA.cpp
 	GS/Renderers/SW/GSDrawScanline.cpp
-	GS/Renderers/SW/GSDrawScanlineCodeGenerator.cpp
 	GS/Renderers/SW/GSDrawScanlineCodeGenerator.all.cpp
 	GS/Renderers/SW/GSRasterizer.cpp
 	GS/Renderers/SW/GSRendererSW.cpp
-	GS/Renderers/SW/GSSetupPrimCodeGenerator.cpp
 	GS/Renderers/SW/GSSetupPrimCodeGenerator.all.cpp
 )
 
@@ -542,14 +530,12 @@ set(pcsx2GSHeaders
 	GS/Renderers/HW/GSTextureCache.h
 	GS/Renderers/HW/GSTextureReplacements.h
 	GS/Renderers/HW/GSVertexHW.h
-	GS/Renderers/SW/GSDrawScanlineCodeGenerator.h
 	GS/Renderers/SW/GSDrawScanlineCodeGenerator.all.h
 	GS/Renderers/SW/GSDrawScanline.h
 	GS/Renderers/SW/GSNewCodeGenerator.h
 	GS/Renderers/SW/GSRasterizer.h
 	GS/Renderers/SW/GSRendererSW.h
 	GS/Renderers/SW/GSScanlineEnvironment.h
-	GS/Renderers/SW/GSSetupPrimCodeGenerator.h
 	GS/Renderers/SW/GSSetupPrimCodeGenerator.all.h
 	GS/Renderers/SW/GSTextureCacheSW.h
 	GS/Renderers/SW/GSVertexSW.h
@@ -580,14 +566,10 @@ if(USE_OPENGL)
 		list(APPEND pcsx2GSSources GS/Renderers/OpenGL/GLContextWGL.cpp)
 		list(APPEND pcsx2GSHeaders GS/Renderers/OpenGL/GLContextWGL.h)
 		target_link_libraries(PCSX2_FLAGS INTERFACE opengl32.lib WinPixEventRuntime::WinPixEventRuntime)
-	elseif(APPLE)
-		list(APPEND pcsx2GSSources GS/Renderers/OpenGL/GLContextAGL.mm)
-		list(APPEND pcsx2GSHeaders GS/Renderers/OpenGL/GLContextAGL.h)
 	else()
 		if(X11_API OR WAYLAND_API)
 			list(APPEND pcsx2GSSources GS/Renderers/OpenGL/GLContextEGL.cpp)
 			list(APPEND pcsx2GSHeaders GS/Renderers/OpenGL/GLContextEGL.h)
-			target_link_libraries(PCSX2_FLAGS INTERFACE PkgConfig::EGL)
 		endif()
 
 		if(X11_API)
@@ -628,7 +610,7 @@ if(USE_VULKAN)
 		GS/Renderers/Vulkan/VKStreamBuffer.h
 		GS/Renderers/Vulkan/VKSwapChain.h
 	)
-	target_link_libraries(PCSX2_FLAGS INTERFACE Vulkan-Headers glslang)
+	target_link_libraries(PCSX2_FLAGS INTERFACE Vulkan-Headers Shaderc::shaderc_shared)
 endif()
 
 set(pcsx2GSMetalShaders
@@ -796,6 +778,15 @@ set(pcsx2DebugToolsHeaders
 	DebugTools/DisVUmicro.h
 	DebugTools/DisVUops.h
 	DebugTools/BiosDebugData.h)
+
+set(pcsx2HostSources
+	Host/AudioStream.cpp
+	Host/CubebAudioStream.cpp
+	Host/SDLAudioStream.cpp)
+
+set(pcsx2HostHeaders
+	Host/AudioStream.h
+	Host/AudioStreamTypes.h)
 
 set(pcsx2ImGuiSources
 	ImGui/FullscreenUI.cpp
@@ -1054,6 +1045,8 @@ target_sources(PCSX2 PRIVATE
 	${pcsx2RecordingSources}
 	${pcsx2DebugToolsSources}
 	${pcsx2DebugToolsHeaders}
+	${pcsx2HostSources}
+	${pcsx2HostHeaders}
 	${pcsx2ImGuiSources}
 	${pcsx2ImGuiHeaders}
 	${pcsx2InputSources}
@@ -1082,7 +1075,6 @@ if(WIN32)
 endif()
 
 target_sources(PCSX2 PRIVATE ${pcsx2USBSources} ${pcsx2USBHeaders})
-target_link_libraries(PCSX2_FLAGS INTERFACE jpgd)
 
 if(APPLE OR BSD)
 	if(APPLE)
@@ -1109,6 +1101,9 @@ target_link_libraries(PCSX2_FLAGS INTERFACE
 	cubeb
 	rcheevos
 	discord-rpc
+	demangler
+	simpleini
+	freesurround
 	SDL2::SDL2
 	ZLIB::ZLIB
 	LZ4::LZ4
@@ -1117,11 +1112,6 @@ target_link_libraries(PCSX2_FLAGS INTERFACE
 	LZMA::LZMA
 	Zstd::Zstd
 	${LIBC_LIBRARIES}
-)
-
-target_link_libraries(PCSX2_FLAGS INTERFACE
-	demangler
-	simpleini
 )
 
 if(WIN32)
@@ -1147,13 +1137,8 @@ if(WIN32)
 		dwmapi.lib
 		OneCore.lib
 	)
-elseif(APPLE)
-	target_link_libraries(PCSX2_FLAGS INTERFACE
-		PCAP::PCAP
-	)
 else()
 	target_link_libraries(PCSX2_FLAGS INTERFACE
-		OpenGL::GL
 		PCAP::PCAP
 	)
 endif()
@@ -1237,9 +1222,6 @@ function(setup_main_executable target)
 	get_property(PCSX2_SOURCE_DIR GLOBAL PROPERTY PCSX2_SOURCE_DIR)
 	get_property(PCSX2_METAL_SHADERS GLOBAL PROPERTY PCSX2_METAL_SHADERS)
 
-	get_target_property(MOC_EXECUTABLE_LOCATION Qt6::moc IMPORTED_LOCATION)
-	get_filename_component(QT_BINARY_DIRECTORY "${MOC_EXECUTABLE_LOCATION}" DIRECTORY)
-
 	if(WIN32)
 		target_sources(${target} PRIVATE
 			${PCSX2_SOURCE_DIR}/windows/PCSX2.manifest
@@ -1250,19 +1232,16 @@ function(setup_main_executable target)
 		if(MSVC)
 			install(FILES $<TARGET_PDB_FILE:${target}> DESTINATION ${CMAKE_SOURCE_DIR}/bin)
 		endif()
-		if(TARGET SDL2::SDL2)
-			# Copy SDL2 DLL to binary directory.
-			if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-				get_property(SDL2_DLL_PATH TARGET SDL2::SDL2 PROPERTY IMPORTED_LOCATION_DEBUG)
-			else()
-				get_property(SDL2_DLL_PATH TARGET SDL2::SDL2 PROPERTY IMPORTED_LOCATION_RELEASE)
-			endif()
-			if(SDL2_DLL_PATH)
-				install(FILES ${SDL2_DLL_PATH} DESTINATION ${CMAKE_SOURCE_DIR}/bin)
-			endif()
-		endif()
-		find_program(WINDEPLOYQT_EXE windeployqt HINTS "${QT_BINARY_DIRECTORY}")
-		install(CODE "execute_process(COMMAND \"${WINDEPLOYQT_EXE}\" \"${CMAKE_SOURCE_DIR}/bin/$<TARGET_FILE_NAME:${target}>\" --plugindir \"${CMAKE_SOURCE_DIR}/bin/QtPlugins\" --no-compiler-runtime --no-system-d3d-compiler --no-translations COMMAND_ERROR_IS_FATAL ANY)")
+
+		# Copy dependency libraries.
+		set(DEPS_BINDIR "${CMAKE_SOURCE_DIR}/deps/bin")
+		set(DEPS_TO_COPY freetype.dll harfbuzz.dll libjpeg.dll libpng16.dll libsharpyuv.dll libwebp.dll lz4.dll SDL2.dll shaderc_shared.dll zlib1.dll zstd.dll)
+		foreach(DEP_TO_COPY ${DEPS_TO_COPY})
+			install(FILES "${DEPS_BINDIR}/${DEP_TO_COPY}" DESTINATION "${CMAKE_SOURCE_DIR}/bin")
+		endforeach()
+
+		get_target_property(WINDEPLOYQT_EXE Qt6::windeployqt IMPORTED_LOCATION)
+		install(CODE "execute_process(COMMAND \"${WINDEPLOYQT_EXE}\" \"${CMAKE_SOURCE_DIR}/bin/$<TARGET_FILE_NAME:${target}>\" --plugindir \"${CMAKE_SOURCE_DIR}/bin/QtPlugins\" --no-compiler-runtime --no-system-d3d-compiler --no-system-dxc-compiler --no-translations COMMAND_ERROR_IS_FATAL ANY)")
 		install(CODE "file(WRITE \"${CMAKE_SOURCE_DIR}/bin/qt.conf\" \"[Paths]\\nPlugins = ./QtPlugins\")")
 	endif()
 
@@ -1337,9 +1316,8 @@ function(setup_main_executable target)
 			set(postprocessBundleType ALL)
 		endif()
 
-		find_program(MACDEPLOYQT_EXE macdeployqt HINTS "${QT_BINARY_DIRECTORY}")
 		add_custom_target(pcsx2-postprocess-bundle ${postprocessBundleType}
-			COMMAND "${MACDEPLOYQT_EXE}" "$<TARGET_FILE_DIR:${target}>/../.." -no-strip
+			COMMAND Qt6::macdeployqt "$<TARGET_FILE_DIR:${target}>/../.." -no-strip
 		)
 		add_dependencies(pcsx2-postprocess-bundle ${target})
 	endif()

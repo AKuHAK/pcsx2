@@ -339,7 +339,7 @@ uint4 sample_4_index(float4 uv, float uv_w)
 		
 	if (PS_RTA_SRC_CORRECTION)
 	{
-		i = uint4(c * 128.55f); // Denormalize value
+		i = uint4(round(c * 128.25f)); // Denormalize value
 	}
 	else
 	{
@@ -766,7 +766,7 @@ float4 ps_color(PS_INPUT input)
 	float4 T = sample_color(st, input.t.w);
 #endif
 
-	if (SW_BLEND && PS_SHUFFLE && !PS_SHUFFLE_SAME && !PS_READ16_SRC && (PS_SHUFFLE_ACROSS || PS_PROCESS_BA == SHUFFLE_READWRITE || PS_PROCESS_RG == SHUFFLE_READWRITE))
+	if ((SW_BLEND || PS_TFX != 1) && PS_SHUFFLE && !PS_SHUFFLE_SAME && !PS_READ16_SRC && (PS_SHUFFLE_ACROSS || PS_PROCESS_BA == SHUFFLE_READWRITE || PS_PROCESS_RG == SHUFFLE_READWRITE))
 	{
 		uint4 denorm_c_before = uint4(T);
 		if (PS_PROCESS_BA & SHUFFLE_READ)
@@ -866,6 +866,25 @@ void ps_blend(inout float4 Color, inout float4 As_rgba, float2 pos_xy)
 
 		float4 RT = SW_BLEND_NEEDS_RT ? RtTexture.Load(int3(pos_xy, 0)) : (float4)0.0f;
 
+		if (PS_SHUFFLE && SW_BLEND_NEEDS_RT)
+		{
+			uint4 denorm_rt = uint4(RT);
+			if (PS_PROCESS_BA & SHUFFLE_WRITE)
+			{
+				RT.r = float((denorm_rt.b << 3) & 0xF8);
+				RT.g = float(((denorm_rt.b >> 2) & 0x38) | ((denorm_rt.a << 6) & 0xC0));
+				RT.b = float((denorm_rt.a << 1) & 0xF8);
+				RT.a = float(denorm_rt.a & 0x80);
+			}
+			else
+			{
+				RT.r = float((denorm_rt.r << 3) & 0xF8);
+				RT.g = float(((denorm_rt.r >> 2) & 0x38) | ((denorm_rt.g << 6) & 0xC0));
+				RT.b = float((denorm_rt.g << 1) & 0xF8);
+				RT.a = float(denorm_rt.g & 0x80);
+			}
+		}
+		
 		float Ad = PS_RTA_CORRECTION ? trunc(RT.a * 128.0f + 0.1f) / 128.0f : trunc(RT.a * 255.0f + 0.1f) / 128.0f;
 		float3 Cd = trunc(RT.rgb * 255.0f + 0.1f);
 		float3 Cs = Color.rgb;
@@ -879,7 +898,7 @@ void ps_blend(inout float4 Color, inout float4 As_rgba, float2 pos_xy)
 		// We shouldn't clamp blend mix with blend hw 1 as we want alpha higher
 		float C_clamped = C;
 		if (PS_BLEND_MIX > 0 && PS_BLEND_HW != 1 && PS_BLEND_HW != 2)
-			C_clamped = min(C_clamped, 1.0f);
+			C_clamped = saturate(C_clamped);
 
 		if (PS_BLEND_A == PS_BLEND_B)
 			Color.rgb = D;
@@ -934,17 +953,13 @@ void ps_blend(inout float4 Color, inout float4 As_rgba, float2 pos_xy)
 		if (PS_BLEND_HW == 1)
 		{
 			// Needed for Cd * (As/Ad/F + 1) blending modes
-
 			Color.rgb = (float3)255.0f;
 		}
 		else if (PS_BLEND_HW == 2)
 		{
 			// Cd*As,Cd*Ad or Cd*F
-
 			float Alpha = PS_BLEND_C == 2 ? Af : As;
-
-			Color.rgb = max((float3)0.0f, (Alpha - (float3)1.0f));
-			Color.rgb *= (float3)255.0f;
+			Color.rgb = saturate((float3)Alpha - (float3)1.0f) * (float3)255.0f;
 		}
 		else if (PS_BLEND_HW == 3 && PS_RTA_CORRECTION == 0)
 		{
@@ -956,6 +971,11 @@ void ps_blend(inout float4 Color, inout float4 As_rgba, float2 pos_xy)
 			float max_color = max(max(Color.r, Color.g), Color.b);
 			float color_compensate = 255.0f / max(128.0f, max_color);
 			Color.rgb *= (float3)color_compensate;
+		}
+		else if (PS_BLEND_HW == 4)
+		{
+			// Needed for Cd * (1 - Ad)
+			Color.rgb = (float3)128.0f;
 		}
 	}
 }
@@ -1037,7 +1057,7 @@ PS_OUTPUT ps_main(PS_INPUT input)
 
 	if (PS_SHUFFLE)
 	{
-		if (SW_BLEND && PS_SHUFFLE && !PS_SHUFFLE_SAME && !PS_READ16_SRC && (PS_SHUFFLE_ACROSS || PS_PROCESS_BA == SHUFFLE_READWRITE || PS_PROCESS_RG == SHUFFLE_READWRITE))
+		if ((SW_BLEND || PS_TFX != 1) && PS_SHUFFLE && !PS_SHUFFLE_SAME && !PS_READ16_SRC && (PS_SHUFFLE_ACROSS || PS_PROCESS_BA == SHUFFLE_READWRITE || PS_PROCESS_RG == SHUFFLE_READWRITE))
 		{
 			uint4 denorm_c_after = uint4(C);
 			if (PS_PROCESS_BA & SHUFFLE_READ)

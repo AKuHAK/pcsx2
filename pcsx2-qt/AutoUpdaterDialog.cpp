@@ -455,6 +455,8 @@ void AutoUpdaterDialog::downloadUpdateClicked()
 	{
 		QMessageBox msgbox;
 		msgbox.setIcon(QMessageBox::Critical);
+		msgbox.setWindowModality(Qt::ApplicationModal);
+		msgbox.setWindowIcon(QtHost::GetAppIcon());
 		msgbox.setWindowTitle(tr("Savestate Warning"));
 		msgbox.setText(tr("<h1>WARNING</h1><p style='font-size:12pt;'>Installing this update will make your <b>save states incompatible</b>, <i>be sure to save any progress to your memory cards before proceeding</i>.</p><p>Do you wish to continue?</p>"));
 		msgbox.addButton(QMessageBox::Yes);
@@ -500,6 +502,11 @@ void AutoUpdaterDialog::downloadUpdateClicked()
 			download_result = processUpdate(data, progress.GetDialog());
 		},
 		&progress);
+
+
+	// Since we're going to block, don't allow the timer to poll, otherwise the progress callback can cause the timer to
+	// run, and recursively poll again.
+	m_http_poll_timer->stop();
 
 	// Block until completion.
 	while (m_http->HasAnyRequests())

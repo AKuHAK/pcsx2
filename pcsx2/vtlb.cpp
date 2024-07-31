@@ -25,6 +25,7 @@
 #include "VMManager.h"
 
 #include "common/BitUtils.h"
+#include "common/Error.h"
 
 #include "fmt/core.h"
 
@@ -43,8 +44,6 @@ using namespace vtlb_private;
 namespace vtlb_private
 {
 	alignas(64) MapData vtlbdata;
-
-	static bool PageFaultHandler(const PageFaultInfo& info);
 } // namespace vtlb_private
 
 static vtlbHandler vtlbHandlerCount = 0;
@@ -833,7 +832,7 @@ static bool vtlb_GetMainMemoryOffsetFromPtr(uptr ptr, u32* mainmem_offset, u32* 
 	if (ptr >= (uptr)eeMem->Main && page_end <= (uptr)eeMem->ZeroRead)
 	{
 		const u32 eemem_offset = static_cast<u32>(ptr - (uptr)eeMem->Main);
-		const bool writeable = ((eemem_offset < Ps2MemSize::MainRam) ? (mmap_GetRamPageInfo(eemem_offset) != ProtMode_Write) : true);
+		const bool writeable = ((eemem_offset < Ps2MemSize::ExposedRam) ? (mmap_GetRamPageInfo(eemem_offset) != ProtMode_Write) : true);
 		*mainmem_offset = (eemem_offset + HostMemoryMap::EEmemOffset);
 		*mainmem_size = (offsetof(EEVM_MemoryAllocMess, ZeroRead) - eemem_offset);
 		*prot = PageProtectionMode().Read().Write(writeable);
@@ -1304,9 +1303,10 @@ bool vtlb_Core_Alloc()
 	DevCon.WriteLn(Color_StrongGreen, "Fastmem area: %p - %p",
 		vtlbdata.fastmem_base, vtlbdata.fastmem_base + (FASTMEM_AREA_SIZE - 1));
 
-	if (!HostSys::InstallPageFaultHandler(&vtlb_private::PageFaultHandler))
+	Error error;
+	if (!PageFaultHandler::Install(&error))
 	{
-		Host::ReportErrorAsync("Error", "Failed to install page fault handler.");
+		Host::ReportErrorAsync("Failed to install page fault handler.", error.GetDescription());
 		return false;
 	}
 
@@ -1332,8 +1332,6 @@ void vtlb_Alloc_Ppmap()
 
 void vtlb_Core_Free()
 {
-	HostSys::RemovePageFaultHandler(&vtlb_private::PageFaultHandler);
-
 	vtlbdata.vmap = nullptr;
 	vtlbdata.ppmap = nullptr;
 
@@ -1384,7 +1382,7 @@ struct vtlb_PageProtectionInfo
 	vtlb_ProtectionMode Mode;
 };
 
-alignas(16) static vtlb_PageProtectionInfo m_PageProtectInfo[Ps2MemSize::MainRam >> __pageshift];
+alignas(16) static vtlb_PageProtectionInfo m_PageProtectInfo[Ps2MemSize::TotalRam >> __pageshift];
 
 
 // returns:
@@ -1400,7 +1398,7 @@ vtlb_ProtectionMode mmap_GetRamPageInfo(u32 paddr)
 	uptr ptr = (uptr)PSM(paddr);
 	uptr rampage = ptr - (uptr)eeMem->Main;
 
-	if (!ptr || rampage >= Ps2MemSize::MainRam)
+	if (!ptr || rampage >= Ps2MemSize::ExposedRam)
 		return ProtMode_NotRequired; //not in ram, no tracking done ...
 
 	rampage >>= __pageshift;
@@ -1456,12 +1454,12 @@ static __fi void mmap_ClearCpuBlock(uint offset)
 	Cpu->Clear(m_PageProtectInfo[rampage].ReverseRamMap, __pagesize);
 }
 
-bool vtlb_private::PageFaultHandler(const PageFaultInfo& info)
+bool PageFaultHandler::HandlePageFault(uptr pc, uptr addr, bool is_write)
 {
 	pxAssert(eeMem);
 
 	u32 vaddr;
-	if (CHECK_FASTMEM && vtlb_GetGuestAddress(info.addr, &vaddr))
+	if (CHECK_FASTMEM && vtlb_GetGuestAddress(addr, &vaddr))
 	{
 		// this was inside the fastmem area. check if it's a code page
 		// fprintf(stderr, "Fault on fastmem %p vaddr %08X\n", info.addr, vaddr);
@@ -1477,14 +1475,14 @@ bool vtlb_private::PageFaultHandler(const PageFaultInfo& info)
 		else
 		{
 			// fprintf(stderr, "Trying backpatching vaddr %08X\n", vaddr);
-			return vtlb_BackpatchLoadStore(info.pc, info.addr);
+			return vtlb_BackpatchLoadStore(pc, addr);
 		}
 	}
 	else
 	{
 		// get bad virtual address
-		uptr offset = info.addr - (uptr)eeMem->Main;
-		if (offset >= Ps2MemSize::MainRam)
+		uptr offset = addr - (uptr)eeMem->Main;
+		if (offset >= Ps2MemSize::ExposedRam)
 			return false;
 
 		mmap_ClearCpuBlock(offset);
@@ -1501,6 +1499,6 @@ void mmap_ResetBlockTracking()
 	//DbgCon.WriteLn( "vtlb/mmap: Block Tracking reset..." );
 	std::memset(m_PageProtectInfo, 0, sizeof(m_PageProtectInfo));
 	if (eeMem)
-		HostSys::MemProtect(eeMem->Main, Ps2MemSize::MainRam, PageAccess_ReadWrite());
-	vtlb_UpdateFastmemProtection(0, Ps2MemSize::MainRam, PageAccess_ReadWrite());
+		HostSys::MemProtect(eeMem->Main, Ps2MemSize::ExposedRam, PageAccess_ReadWrite());
+	vtlb_UpdateFastmemProtection(0, Ps2MemSize::ExposedRam, PageAccess_ReadWrite());
 }

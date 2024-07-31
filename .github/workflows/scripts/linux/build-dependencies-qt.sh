@@ -7,56 +7,136 @@ if [ "$#" -ne 1 ]; then
     exit 1
 fi
 
-INSTALLDIR="$1"
+SCRIPTDIR=$(realpath $(dirname "${BASH_SOURCE[0]}"))
 NPROCS="$(getconf _NPROCESSORS_ONLN)"
-SDL=SDL2-2.30.1
-QT=6.6.2
-LIBBACKTRACE=ad106d5fdd5d960bd33fae1c48a351af567fd075
-
+INSTALLDIR="$1"
 if [ "${INSTALLDIR:0:1}" != "/" ]; then
 	INSTALLDIR="$PWD/$INSTALLDIR"
 fi
+
+LIBBACKTRACE=ad106d5fdd5d960bd33fae1c48a351af567fd075
+LIBJPEG=9f
+LIBPNG=1.6.43
+LIBWEBP=1.3.2
+LZ4=b8fd2d15309dd4e605070bd4486e26b6ef814e29
+SDL=SDL2-2.30.3
+QT=6.7.0
+ZSTD=1.5.5
+
+SHADERC=2024.0
+SHADERC_GLSLANG=d73712b8f6c9047b09e99614e20d456d5ada2390
+SHADERC_SPIRVHEADERS=8b246ff75c6615ba4532fe4fde20f1be090c3764
+SHADERC_SPIRVTOOLS=04896c462d9f3f504c99a4698605b6524af813c1
 
 mkdir -p deps-build
 cd deps-build
 
 cat > SHASUMS <<EOF
-01215ffbc8cfc4ad165ba7573750f15ddda1f971d5a66e9dcaffd37c587f473a  $SDL.tar.gz
 fd6f417fe9e3a071cf1424a5152d926a34c4a3c5070745470be6cf12a404ed79  $LIBBACKTRACE.zip
-b89b426b9852a17d3e96230ab0871346574d635c7914480a2a27f98ff942677b  qtbase-everywhere-src-$QT.tar.xz
-71584c9136d4983ad19fa2d017abbae57b055eb90c62a36bf3f45d6d21a87cb3  qtimageformats-everywhere-src-$QT.tar.xz
-5a231d59ef1b42bfbaa5174d4ff39f8e1b4ba070ef984a70b069b4b2576d8181  qtsvg-everywhere-src-$QT.tar.xz
-e6d49e9f52111287f77878ecb8b708cce682f10b03ba2476d9247603bc6c4746  qttools-everywhere-src-$QT.tar.xz
-ca3ac090ef3aa12566c26b482c106f1f986c5a3444e7003f379726a550530c77  qttranslations-everywhere-src-$QT.tar.xz
-9bcdd5cef7ae304e3e0435dac495367ccfb010d09f664b596ba330361941dd78  qtwayland-everywhere-src-$QT.tar.xz
+04705c110cb2469caa79fb71fba3d7bf834914706e9641a4589485c1f832565b  jpegsrc.v$LIBJPEG.tar.gz
+6a5ca0652392a2d7c9db2ae5b40210843c0bbc081cbd410825ab00cc59f14a6c  libpng-$LIBPNG.tar.xz
+2a499607df669e40258e53d0ade8035ba4ec0175244869d1025d460562aa09b4  libwebp-$LIBWEBP.tar.gz
+0728800155f3ed0a0c87e03addbd30ecbe374f7b080678bbca1506051d50dec3  $LZ4.tar.gz
+820440072f8f5b50188c1dae104f2ad25984de268785be40c41a099a510f0aec  $SDL.tar.gz
+9c4396cc829cfae319a6e2615202e82aad41372073482fce286fac78646d3ee4  zstd-$ZSTD.tar.gz
+11b2e29e2e52fb0e3b453ea13bbe51a10fdff36e1c192d8868c5a40233b8b254  qtbase-everywhere-src-$QT.tar.xz
+516ce07ec8dd5a11c59816fe33ddb71d4f691d0ebbc1798ac338f23b86c029a7  qtimageformats-everywhere-src-$QT.tar.xz
+1518f40e08ff5e6153a6e26e5b95b033413ac143b70795dc1317e7f73ebf922d  qtsvg-everywhere-src-$QT.tar.xz
+c8da6b239e82fe1e23465cbf0936c0da5a334438d3fb433e19c503cbb1abee7b  qttools-everywhere-src-$QT.tar.xz
+26fc8047062ca4bacd1bd953be86fd39c6e0a5f5e9920c72ba9d40876cea4b56  qttranslations-everywhere-src-$QT.tar.xz
+d73470e4217da388d8cd2a517ee8bb373853f33c569306e80f04397845157aea  qtwayland-everywhere-src-$QT.tar.xz
+c761044e4e204be8e0b9a2d7494f08671ca35b92c4c791c7049594ca7514197f  shaderc-$SHADERC.tar.gz
+d27f7359156a92749f8fd4681d1d518c736864213c431cf8144ecc2fb6689a2d  shaderc-glslang-$SHADERC_GLSLANG.tar.gz
+cfeed5f9a97d12a9761a26e7f5bd10fedb1a8ce92033075151ae3bc7206fc229  shaderc-spirv-headers-$SHADERC_SPIRVHEADERS.tar.gz
+c0d01e758a543b3a358cb97af02c6817ebd3f5ff13a2edf9fb220646a3d67999  shaderc-spirv-tools-$SHADERC_SPIRVTOOLS.tar.gz
 EOF
 
-curl -L \
-	-O "https://libsdl.org/release/$SDL.tar.gz" \
+curl -C - -L \
 	-O "https://github.com/ianlancetaylor/libbacktrace/archive/$LIBBACKTRACE.zip" \
+	-O "https://ijg.org/files/jpegsrc.v$LIBJPEG.tar.gz" \
+	-O "https://downloads.sourceforge.net/project/libpng/libpng16/$LIBPNG/libpng-$LIBPNG.tar.xz" \
+	-O "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-$LIBWEBP.tar.gz" \
+	-O "https://github.com/lz4/lz4/archive/$LZ4.tar.gz" \
+	-O "https://libsdl.org/release/$SDL.tar.gz" \
+	-O "https://github.com/facebook/zstd/releases/download/v$ZSTD/zstd-$ZSTD.tar.gz" \
 	-O "https://download.qt.io/official_releases/qt/${QT%.*}/$QT/submodules/qtbase-everywhere-src-$QT.tar.xz" \
 	-O "https://download.qt.io/official_releases/qt/${QT%.*}/$QT/submodules/qtimageformats-everywhere-src-$QT.tar.xz" \
 	-O "https://download.qt.io/official_releases/qt/${QT%.*}/$QT/submodules/qtsvg-everywhere-src-$QT.tar.xz" \
 	-O "https://download.qt.io/official_releases/qt/${QT%.*}/$QT/submodules/qttools-everywhere-src-$QT.tar.xz" \
 	-O "https://download.qt.io/official_releases/qt/${QT%.*}/$QT/submodules/qttranslations-everywhere-src-$QT.tar.xz" \
-	-O "https://download.qt.io/official_releases/qt/${QT%.*}/$QT/submodules/qtwayland-everywhere-src-$QT.tar.xz"
+	-O "https://download.qt.io/official_releases/qt/${QT%.*}/$QT/submodules/qtwayland-everywhere-src-$QT.tar.xz" \
+	-o "shaderc-$SHADERC.tar.gz" "https://github.com/google/shaderc/archive/refs/tags/v$SHADERC.tar.gz" \
+	-o "shaderc-glslang-$SHADERC_GLSLANG.tar.gz" "https://github.com/KhronosGroup/glslang/archive/$SHADERC_GLSLANG.tar.gz" \
+	-o "shaderc-spirv-headers-$SHADERC_SPIRVHEADERS.tar.gz" "https://github.com/KhronosGroup/SPIRV-Headers/archive/$SHADERC_SPIRVHEADERS.tar.gz" \
+	-o "shaderc-spirv-tools-$SHADERC_SPIRVTOOLS.tar.gz" "https://github.com/KhronosGroup/SPIRV-Tools/archive/$SHADERC_SPIRVTOOLS.tar.gz"
 
 shasum -a 256 --check SHASUMS
 
-echo "Building SDL..."
-tar xf "$SDL.tar.gz"
-cd "$SDL"
-./configure --prefix "$INSTALLDIR" --enable-dbus --without-x --disable-video-opengl --disable-video-opengles --disable-video-vulkan --disable-wayland-shared --disable-ime --disable-oss --disable-alsa --disable-jack --disable-esd --disable-pipewire --disable-pulseaudio --disable-arts --disable-nas --disable-sndio --disable-fusionsound --disable-diskaudio
-make "-j$NPROCS"
-make install
-cd ..
-
 echo "Building libbacktrace..."
+rm -fr "libbacktrace-$LIBBACKTRACE"
 unzip "$LIBBACKTRACE.zip"
 cd "libbacktrace-$LIBBACKTRACE"
 ./configure --prefix="$INSTALLDIR"
 make
 make install
+cd ..
+
+echo "Building libpng..."
+rm -fr "libpng-$LIBPNG"
+tar xf "libpng-$LIBPNG.tar.xz"
+cd "libpng-$LIBPNG"
+cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$INSTALLDIR" -DCMAKE_INSTALL_PREFIX="$INSTALLDIR" -DBUILD_SHARED_LIBS=ON -DBUILD_SHARED_LIBS=ON -DPNG_TESTS=OFF -DPNG_STATIC=OFF -DPNG_SHARED=ON -DPNG_TOOLS=OFF -B build -G Ninja
+cmake --build build --parallel
+ninja -C build install
+cd ..
+
+echo "Building libjpeg..."
+rm -fr "jpeg-$LIBJPEG"
+tar xf "jpegsrc.v$LIBJPEG.tar.gz"
+cd "jpeg-$LIBJPEG"
+mkdir build
+cd build
+../configure --prefix="$INSTALLDIR" --disable-static --enable-shared
+make "-j$NPROCS"
+make install
+cd ../..
+
+echo "Building LZ4..."
+rm -fr "lz4-$LZ4"
+tar xf "$LZ4.tar.gz"
+cd "lz4-$LZ4"
+cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$INSTALLDIR" -DCMAKE_INSTALL_PREFIX="$INSTALLDIR" -DBUILD_SHARED_LIBS=ON -DLZ4_BUILD_CLI=OFF -DLZ4_BUILD_LEGACY_LZ4C=OFF -B build-dir -G Ninja build/cmake
+cmake --build build-dir --parallel
+ninja -C build-dir install
+cd ..
+
+echo "Building Zstandard..."
+rm -fr "zstd-$ZSTD"
+tar xf "zstd-$ZSTD.tar.gz"
+cd "zstd-$ZSTD"
+cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$INSTALLDIR" -DCMAKE_INSTALL_PREFIX="$INSTALLDIR" -DBUILD_SHARED_LIBS=ON -DZSTD_BUILD_SHARED=ON -DZSTD_BUILD_STATIC=OFF -DZSTD_BUILD_PROGRAMS=OFF -B build -G Ninja build/cmake
+cmake --build build --parallel
+ninja -C build install
+cd ..
+
+echo "Building WebP..."
+rm -fr "libwebp-$LIBWEBP"
+tar xf "libwebp-$LIBWEBP.tar.gz"
+cd "libwebp-$LIBWEBP"
+cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$INSTALLDIR" -DCMAKE_INSTALL_PREFIX="$INSTALLDIR" -B build -G Ninja \
+  -DWEBP_BUILD_ANIM_UTILS=OFF -DWEBP_BUILD_CWEBP=OFF -DWEBP_BUILD_DWEBP=OFF -DWEBP_BUILD_GIF2WEBP=OFF -DWEBP_BUILD_IMG2WEBP=OFF \
+  -DWEBP_BUILD_VWEBP=OFF -DWEBP_BUILD_WEBPINFO=OFF -DWEBP_BUILD_WEBPMUX=OFF -DWEBP_BUILD_EXTRAS=OFF -DBUILD_SHARED_LIBS=ON
+cmake --build build --parallel
+ninja -C build install
+cd ..
+
+echo "Building SDL..."
+rm -fr "$SDL"
+tar xf "$SDL.tar.gz"
+cd "$SDL"
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$INSTALLDIR" -DCMAKE_INSTALL_PREFIX="$INSTALLDIR" -DBUILD_SHARED_LIBS=ON -DSDL_SHARED=ON -DSDL_STATIC=OFF -G Ninja
+cmake --build build --parallel
+ninja -C build install
 cd ..
 
 # Couple notes:
@@ -65,46 +145,51 @@ cd ..
 # ICU avoids pulling in a bunch of large libraries, and hopefully we can get away without it.
 # OpenGL is needed to render window decorations in Wayland, apparently.
 echo "Building Qt Base..."
+rm -fr "qtbase-everywhere-src-$QT"
 tar xf "qtbase-everywhere-src-$QT.tar.xz"
 cd "qtbase-everywhere-src-$QT"
 mkdir build
 cd build
-../configure -prefix "$INSTALLDIR" -release -dbus-linked -gui -widgets -fontconfig -qt-doubleconversion -ssl -openssl-runtime -opengl desktop -qpa xcb,wayland -xkbcommon -- -DFEATURE_dbus=ON -DFEATURE_icu=OFF -DFEATURE_printsupport=OFF -DFEATURE_sql=OFF
+../configure -prefix "$INSTALLDIR" -release -dbus-linked -gui -widgets -fontconfig -qt-doubleconversion -ssl -openssl-runtime -opengl desktop -qpa xcb,wayland -xkbcommon -xcb -gtk -- -DFEATURE_dbus=ON -DFEATURE_icu=OFF -DFEATURE_printsupport=OFF -DFEATURE_sql=OFF -DFEATURE_system_png=ON -DFEATURE_system_jpeg=ON -DFEATURE_system_zlib=ON -DFEATURE_system_freetype=ON -DFEATURE_system_harfbuzz=ON
 cmake --build . --parallel
-cmake --install .
+ninja install
 cd ../../
 
 echo "Building Qt SVG..."
+rm -fr "qtsvg-everywhere-src-$QT"
 tar xf "qtsvg-everywhere-src-$QT.tar.xz"
 cd "qtsvg-everywhere-src-$QT"
 mkdir build
 cd build
-cmake -G Ninja -DCMAKE_PREFIX_PATH="$INSTALLDIR" -DCMAKE_INSTALL_PREFIX="$INSTALLDIR" -DCMAKE_BUILD_TYPE=Release ..
+"$INSTALLDIR/bin/qt-configure-module" .. -- -DCMAKE_PREFIX_PATH="$INSTALLDIR"
 cmake --build . --parallel
-cmake --install .
+ninja install
 cd ../../
 
 echo "Building Qt Image Formats..."
+rm -fr "qtimageformats-everywhere-src-$QT"
 tar xf "qtimageformats-everywhere-src-$QT.tar.xz"
 cd "qtimageformats-everywhere-src-$QT"
 mkdir build
 cd build
-cmake -G Ninja -DCMAKE_PREFIX_PATH="$INSTALLDIR" -DCMAKE_INSTALL_PREFIX="$INSTALLDIR" -DCMAKE_BUILD_TYPE=Release ..
+"$INSTALLDIR/bin/qt-configure-module" .. -- -DCMAKE_PREFIX_PATH="$INSTALLDIR" -DFEATURE_system_webp=ON
 cmake --build . --parallel
-cmake --install .
+ninja install
 cd ../../
 
 echo "Building Qt Wayland..."
+rm -fr "qtwayland-everywhere-src-$QT"
 tar xf "qtwayland-everywhere-src-$QT.tar.xz"
 cd "qtwayland-everywhere-src-$QT"
 mkdir build
 cd build
-cmake -G Ninja -DCMAKE_PREFIX_PATH="$INSTALLDIR" -DCMAKE_INSTALL_PREFIX="$INSTALLDIR" -DCMAKE_BUILD_TYPE=Release ..
+"$INSTALLDIR/bin/qt-configure-module" .. -- -DCMAKE_PREFIX_PATH="$INSTALLDIR"
 cmake --build . --parallel
-cmake --install .
+ninja install
 cd ../../
 
 echo "Installing Qt Tools..."
+rm -fr "qttools-everywhere-src-$QT"
 tar xf "qttools-everywhere-src-$QT.tar.xz"
 cd "qttools-everywhere-src-$QT"
 # From Mac build-dependencies.sh:
@@ -148,20 +233,39 @@ EOF
 
 mkdir build
 cd build
-cmake -G Ninja -DCMAKE_PREFIX_PATH="$INSTALLDIR" -DCMAKE_INSTALL_PREFIX="$INSTALLDIR" -DCMAKE_BUILD_TYPE=Release -DFEATURE_assistant=OFF -DFEATURE_clang=OFF -DFEATURE_designer=OFF -DFEATURE_kmap2qmap=OFF -DFEATURE_pixeltool=OFF -DFEATURE_pkg_config=OFF -DFEATURE_qev=OFF -DFEATURE_qtattributionsscanner=OFF -DFEATURE_qtdiag=OFF -DFEATURE_qtplugininfo=OFF ..
+"$INSTALLDIR/bin/qt-configure-module" .. -- -DCMAKE_PREFIX_PATH="$INSTALLDIR" -DFEATURE_assistant=OFF -DFEATURE_clang=OFF -DFEATURE_designer=OFF -DFEATURE_kmap2qmap=OFF -DFEATURE_pixeltool=OFF -DFEATURE_pkg_config=OFF -DFEATURE_qev=OFF -DFEATURE_qtattributionsscanner=OFF -DFEATURE_qtdiag=OFF -DFEATURE_qtplugininfo=OFF
 cmake --build . --parallel
-cmake --install .
+ninja install
 cd ../../
 
 echo "Installing Qt Translations..."
+rm -fr "qttranslations-everywhere-src-$QT"
 tar xf "qttranslations-everywhere-src-$QT.tar.xz"
 cd "qttranslations-everywhere-src-$QT"
 mkdir build
 cd build
-cmake -G Ninja -DCMAKE_PREFIX_PATH="$INSTALLDIR" -DCMAKE_INSTALL_PREFIX="$INSTALLDIR" -DCMAKE_BUILD_TYPE=Release ..
+"$INSTALLDIR/bin/qt-configure-module" .. -- -DCMAKE_PREFIX_PATH="$INSTALLDIR"
 cmake --build . --parallel
-cmake --install .
+ninja install
 cd ../../
+
+echo "Building shaderc..."
+rm -fr "shaderc-$SHADERC"
+tar xf "shaderc-$SHADERC.tar.gz"
+cd "shaderc-$SHADERC"
+cd third_party
+tar xf "../../shaderc-glslang-$SHADERC_GLSLANG.tar.gz"
+mv "glslang-$SHADERC_GLSLANG" "glslang"
+tar xf "../../shaderc-spirv-headers-$SHADERC_SPIRVHEADERS.tar.gz"
+mv "SPIRV-Headers-$SHADERC_SPIRVHEADERS" "spirv-headers"
+tar xf "../../shaderc-spirv-tools-$SHADERC_SPIRVTOOLS.tar.gz"
+mv "SPIRV-Tools-$SHADERC_SPIRVTOOLS" "spirv-tools"
+cd ..
+patch -p1 < "$SCRIPTDIR/../common/shaderc-changes.patch"
+cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$INSTALLDIR" -DCMAKE_INSTALL_PREFIX="$INSTALLDIR" -DSHADERC_SKIP_TESTS=ON -DSHADERC_SKIP_EXAMPLES=ON -DSHADERC_SKIP_COPYRIGHT_CHECK=ON -B build -G Ninja
+cmake --build build --parallel
+ninja -C build install
+cd ..
 
 echo "Cleaning up..."
 cd ..

@@ -47,14 +47,22 @@ void QtHost::SetStyleFromSettings()
 {
 	const std::string theme(Host::GetBaseStringSettingValue("UI", "Theme", GetDefaultThemeName()));
 
+	// setPalette() shouldn't be necessary, as the documentation claims that setStyle() resets the palette, but it
+	// is here, to work around a bug in 6.4.x and 6.5.x where the palette doesn't restore after changing themes.
+	qApp->setPalette(QPalette());
+
 	if (theme == "fusion")
 	{
-		// setPalette() shouldn't be necessary, as the documentation claims that setStyle() resets the palette, but it
-		// is here, to work around a bug in 6.4.x and 6.5.x where the palette doesn't restore after changing themes.
-		qApp->setPalette(QPalette());
 		qApp->setStyle(QStyleFactory::create("Fusion"));
 		qApp->setStyleSheet(QString());
 	}
+#ifdef _WIN32
+	else if (theme == "windowsvista")
+	{
+		qApp->setStyle(QStyleFactory::create("windowsvista"));
+		qApp->setStyleSheet(QString());
+	}
+#endif
 	else if (theme == "darkfusion")
 	{
 		// adapted from https://gist.github.com/QuantumCD/6245215
@@ -88,8 +96,6 @@ void QtHost::SetStyleFromSettings()
 		darkPalette.setColor(QPalette::Disabled, QPalette::Light, darkGray);
 
 		qApp->setPalette(darkPalette);
-
-		qApp->setStyleSheet("QToolTip { color: #ffffff; background-color: #2a82da; border: 1px solid white; }");
 	}
 	else if (theme == "darkfusionblue")
 	{
@@ -124,8 +130,41 @@ void QtHost::SetStyleFromSettings()
 		darkPalette.setColor(QPalette::Disabled, QPalette::Light, darkGray);
 
 		qApp->setPalette(darkPalette);
+	}
+	else if (theme == "GreyMatter")
+	{
+		// Custom palette by KamFretoZ, A sleek and stylish gray
+		// that are meant to be easy on the eyes as the main color.
+		// Alternative dark theme.
+		qApp->setStyle(QStyleFactory::create("Fusion"));
 
-		qApp->setStyleSheet("QToolTip { color: #ffffff; background-color: #2a82da; border: 1px solid white; }");
+		const QColor darkGray(46, 52, 64);
+		const QColor lighterGray(59, 66, 82);
+		const QColor gray(111, 111, 111);
+		const QColor blue(198, 238, 255);
+
+		QPalette darkPalette;
+		darkPalette.setColor(QPalette::Window, darkGray);
+		darkPalette.setColor(QPalette::WindowText, Qt::white);
+		darkPalette.setColor(QPalette::Base, lighterGray);
+		darkPalette.setColor(QPalette::AlternateBase, darkGray);
+		darkPalette.setColor(QPalette::ToolTipBase, darkGray);
+		darkPalette.setColor(QPalette::ToolTipText, Qt::white);
+		darkPalette.setColor(QPalette::Text, Qt::white);
+		darkPalette.setColor(QPalette::Button, lighterGray);
+		darkPalette.setColor(QPalette::ButtonText, Qt::white);
+		darkPalette.setColor(QPalette::Link, blue);
+		darkPalette.setColor(QPalette::Highlight, lighterGray.lighter());
+		darkPalette.setColor(QPalette::HighlightedText, Qt::white);
+		darkPalette.setColor(QPalette::PlaceholderText, QColor(Qt::white).darker());
+
+		darkPalette.setColor(QPalette::Active, QPalette::Button, lighterGray);
+		darkPalette.setColor(QPalette::Disabled, QPalette::ButtonText, gray.lighter());
+		darkPalette.setColor(QPalette::Disabled, QPalette::WindowText, gray.lighter());
+		darkPalette.setColor(QPalette::Disabled, QPalette::Text, gray.lighter());
+		darkPalette.setColor(QPalette::Disabled, QPalette::Light, darkGray);
+
+		qApp->setPalette(darkPalette);
 	}
 	else if (theme == "UntouchedLagoon")
 	{
@@ -160,8 +199,6 @@ void QtHost::SetStyleFromSettings()
 		standardPalette.setColor(QPalette::Disabled, QPalette::Light, tameTeal);
 
 		qApp->setPalette(standardPalette);
-
-		qApp->setStyleSheet("QToolTip { color: #ffffff; background-color: #2a82da; border: 1px solid white; }");
 	}
 	else if (theme == "BabyPastel")
 	{
@@ -198,8 +235,6 @@ void QtHost::SetStyleFromSettings()
 		standardPalette.setColor(QPalette::Disabled, QPalette::Light, gray);
 
 		qApp->setPalette(standardPalette);
-
-		qApp->setStyleSheet("QToolTip { color: #ffffff; background-color: #2a82da; border: 1px solid white; }");
 	}
 	else if (theme == "PizzaBrown")
 	{
@@ -235,8 +270,6 @@ void QtHost::SetStyleFromSettings()
 		standardPalette.setColor(QPalette::Disabled, QPalette::Light, gray.lighter());
 
 		qApp->setPalette(standardPalette);
-
-		qApp->setStyleSheet("QToolTip { color: #ffffff; background-color: #cc3f18; border: 1px solid white; }");
 	}
 	else if (theme == "PCSX2Blue")
 	{
@@ -271,8 +304,6 @@ void QtHost::SetStyleFromSettings()
 		standardPalette.setColor(QPalette::Disabled, QPalette::Light, darkBlue);
 
 		qApp->setPalette(standardPalette);
-
-		qApp->setStyleSheet("QToolTip { color: #ffffff; background-color: #2a82da; border: 1px solid white; }");
 	}
 	else if (theme == "ScarletDevilRed")
 	{
@@ -305,8 +336,38 @@ void QtHost::SetStyleFromSettings()
 		darkPalette.setColor(QPalette::Disabled, QPalette::Light, darkRed);
 
 		qApp->setPalette(darkPalette);
+	}
+	else if (theme == "VioletAngelPurple")
+	{
+		// Custom palette by RedDevilus, Blue as main color and Purple as complimentary.
+		// Alternative dark theme.
+		qApp->setStyle(QStyleFactory::create("Fusion"));
 
-		qApp->setStyleSheet("QToolTip { color: #ffffff; background-color: #2a82da; border: 1px solid white; }");
+		const QColor blackishblue(50, 25, 70);
+		const QColor darkerPurple(90, 30, 105);
+		const QColor nauticalPurple(110, 30, 125);
+
+		QPalette darkPalette;
+		darkPalette.setColor(QPalette::Window, blackishblue);
+		darkPalette.setColor(QPalette::WindowText, Qt::white);
+		darkPalette.setColor(QPalette::Base, nauticalPurple);
+		darkPalette.setColor(QPalette::AlternateBase, blackishblue);
+		darkPalette.setColor(QPalette::ToolTipBase, nauticalPurple);
+		darkPalette.setColor(QPalette::ToolTipText, Qt::white);
+		darkPalette.setColor(QPalette::Text, Qt::white);
+		darkPalette.setColor(QPalette::Button, nauticalPurple.darker());
+		darkPalette.setColor(QPalette::ButtonText, Qt::white);
+		darkPalette.setColor(QPalette::Link, darkerPurple.lighter());
+		darkPalette.setColor(QPalette::Highlight, darkerPurple.lighter());
+		darkPalette.setColor(QPalette::HighlightedText, Qt::white);
+
+		darkPalette.setColor(QPalette::Active, QPalette::Button, nauticalPurple.darker());
+		darkPalette.setColor(QPalette::Disabled, QPalette::ButtonText, darkerPurple.lighter());
+		darkPalette.setColor(QPalette::Disabled, QPalette::WindowText, darkerPurple.lighter());
+		darkPalette.setColor(QPalette::Disabled, QPalette::Text, darkerPurple.darker());
+		darkPalette.setColor(QPalette::Disabled, QPalette::Light, nauticalPurple);
+
+		qApp->setPalette(darkPalette);
 	}
 	else if (theme == "CobaltSky")
 	{
@@ -343,42 +404,6 @@ void QtHost::SetStyleFromSettings()
 		darkPalette.setColor(QPalette::Disabled, QPalette::Light, gray);
 
 		qApp->setPalette(darkPalette);
-
-		qApp->setStyleSheet("QToolTip { color: #ffffff; background-color: #000080; border: 1px solid white; }");
-	}
-	else if (theme == "VioletAngelPurple")
-	{
-		// Custom palette by RedDevilus, Blue as main color and Purple as complimentary.
-		// Alternative dark theme.
-		qApp->setStyle(QStyleFactory::create("Fusion"));
-
-		const QColor blackishblue(50, 25, 70);
-		const QColor darkerPurple(90, 30, 105);
-		const QColor nauticalPurple(110, 30, 125);
-
-		QPalette darkPalette;
-		darkPalette.setColor(QPalette::Window, blackishblue);
-		darkPalette.setColor(QPalette::WindowText, Qt::white);
-		darkPalette.setColor(QPalette::Base, nauticalPurple);
-		darkPalette.setColor(QPalette::AlternateBase, blackishblue);
-		darkPalette.setColor(QPalette::ToolTipBase, nauticalPurple);
-		darkPalette.setColor(QPalette::ToolTipText, Qt::white);
-		darkPalette.setColor(QPalette::Text, Qt::white);
-		darkPalette.setColor(QPalette::Button, nauticalPurple.darker());
-		darkPalette.setColor(QPalette::ButtonText, Qt::white);
-		darkPalette.setColor(QPalette::Link, darkerPurple.lighter());
-		darkPalette.setColor(QPalette::Highlight, darkerPurple.lighter());
-		darkPalette.setColor(QPalette::HighlightedText, Qt::white);
-
-		darkPalette.setColor(QPalette::Active, QPalette::Button, nauticalPurple.darker());
-		darkPalette.setColor(QPalette::Disabled, QPalette::ButtonText, darkerPurple.lighter());
-		darkPalette.setColor(QPalette::Disabled, QPalette::WindowText, darkerPurple.lighter());
-		darkPalette.setColor(QPalette::Disabled, QPalette::Text, darkerPurple.darker());
-		darkPalette.setColor(QPalette::Disabled, QPalette::Light, nauticalPurple);
-
-		qApp->setPalette(darkPalette);
-
-		qApp->setStyleSheet("QToolTip { color: #ffffff; background-color: #2a82da; border: 1px solid white; }");
 	}
 	else if (theme == "Ruby")
 	{
@@ -411,8 +436,6 @@ void QtHost::SetStyleFromSettings()
 		darkPalette.setColor(QPalette::Disabled, QPalette::Light, slate.lighter());
 
 		qApp->setPalette(darkPalette);
-
-		qApp->setStyleSheet("QToolTip { color: #ffffff; background-color: #2a82da; border: 1px solid white; }");
 	}
 	else if (theme == "Sapphire")
 	{
@@ -445,8 +468,6 @@ void QtHost::SetStyleFromSettings()
 		darkPalette.setColor(QPalette::Disabled, QPalette::Light, slate.lighter());
 
 		qApp->setPalette(darkPalette);
-
-		qApp->setStyleSheet("QToolTip { color: #ffffff; background-color: #2a82da; border: 1px solid white; }");
 	}
 	else if (theme == "Custom")
 	{
@@ -468,9 +489,6 @@ void QtHost::SetStyleFromSettings()
 	}
 	else
 	{
-		// setPalette() shouldn't be necessary, as the documentation claims that setStyle() resets the palette, but it
-		// is here, to work around a bug in 6.4.x and 6.5.x where the palette doesn't restore after changing themes.
-		qApp->setPalette(QPalette());
 		qApp->setStyle(s_unthemed_style_name);
 		qApp->setStyleSheet(QString());
 	}

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2002-2023 PCSX2 Dev Team
+// SPDX-FileCopyrightText: 2002-2024 PCSX2 Dev Team
 // SPDX-License-Identifier: LGPL-3.0+
 
 #pragma once
@@ -65,7 +65,7 @@ namespace Achievements
 	void GameChanged(u32 disc_crc, u32 crc);
 
 	/// Re-enables hardcode mode if it is enabled in the settings.
-	bool ResetHardcoreMode();
+	bool ResetHardcoreMode(bool is_booting);
 
 	/// Forces hardcore mode off until next reset.
 	void DisableHardcoreMode();
@@ -108,6 +108,13 @@ namespace Achievements
 	/// Returns the RetroAchievements title for the current game.
 	/// Should be called with the lock held.
 	const std::string& GetGameTitle();
+
+	/// Returns the logged-in user name.
+	const char* GetLoggedInUserName();
+
+	/// Returns the path to the user's profile avatar.
+	/// Should be called with the lock held.
+	std::string GetLoggedInUserBadgePath();
 
 	/// Clears all cached state used to render the UI.
 	void ClearUIState();

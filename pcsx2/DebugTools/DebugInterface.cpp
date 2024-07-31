@@ -670,7 +670,7 @@ bool R5900DebugInterface::isValidAddress(u32 addr)
 			// [ 0000_8000 - 01FF_FFFF ] RAM
 			// [ 2000_8000 - 21FF_FFFF ] RAM MIRROR
 			// [ 3000_8000 - 31FF_FFFF ] RAM MIRROR
-			if (lopart >= 0x80000 && lopart <= 0x1ffFFff)
+			if (lopart >= 0x80000 && lopart < Ps2MemSize::ExposedRam)
 				return !!vtlb_GetPhyPtr(lopart);
 			break;
 		case 1:
@@ -700,7 +700,8 @@ bool R5900DebugInterface::isValidAddress(u32 addr)
 		case 0xA:
 		case 0xB:
 			// [ 8000_0000 - BFFF_FFFF ] kernel
-			return true;
+			if (lopart >= 0xFC00000)
+				return true;
 		case 0xF:
 			// [ 8000_0000 - BFFF_FFFF ] IOP or kernel stack
 			if (lopart >= 0xfff8000)

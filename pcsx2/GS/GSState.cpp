@@ -495,7 +495,11 @@ void GSState::DumpVertices(const std::string& filename)
 			file << uv_U << DEL << uv_V;
 		}
 		else
-			file << v.ST.S << "(" << std::bit_cast<u32>(v.ST.S) << ")" << DEL << v.ST.T << "(" << std::bit_cast<u32>(v.ST.T) << ")" << DEL << v.RGBAQ.Q << "(" << std::bit_cast<u32>(v.RGBAQ.Q) << ")";
+		{
+			float x = (v.ST.S / v.RGBAQ.Q) * (1 << m_context->TEX0.TW);
+			float y = (v.ST.T / v.RGBAQ.Q) * (1 << m_context->TEX0.TH);
+			file << v.ST.S << "(" << std::hex << std::bit_cast<u32>(v.ST.S) << ")" << DEL << v.ST.T << "(" << std::hex << std::bit_cast<u32>(v.ST.T) << ")" << DEL << v.RGBAQ.Q << "(" << std::hex << std::bit_cast<u32>(v.RGBAQ.Q) << ") - " << x << "," << y;
+		}
 
 		file << std::endl;
 	}
@@ -2816,7 +2820,7 @@ void GSState::GrowVertexBuffer()
 	m_index.buff = index;
 }
 
-bool GSState::TrianglesAreQuads() const
+bool GSState::TrianglesAreQuads(bool shuffle_check) const
 {
 	// If this is a quad, there should only be two distinct values for both X and Y, which
 	// also happen to be the minimum/maximum bounds of the primitive.
@@ -2829,10 +2833,17 @@ bool GSState::TrianglesAreQuads() const
 		if (idx > 0)
 		{
 			const u16* const prev_tri= m_index.buff + (idx - 3);
-			const GSVertex& vert = v[i[0]];
-			const GSVertex& last_vert = v[i[2]];
-			if (vert.XYZ != m_vertex.buff[prev_tri[0]].XYZ && vert.XYZ != m_vertex.buff[prev_tri[1]].XYZ && vert.XYZ != m_vertex.buff[prev_tri[2]].XYZ &&
-				last_vert.XYZ != m_vertex.buff[prev_tri[0]].XYZ && last_vert.XYZ != m_vertex.buff[prev_tri[1]].XYZ && last_vert.XYZ != m_vertex.buff[prev_tri[2]].XYZ)
+			GIFRegXYZ vert = v[i[0]].XYZ;
+			GIFRegXYZ last_vert = v[i[2]].XYZ;
+
+			if (shuffle_check)
+			{
+				vert.X -= 8 << 4;
+				last_vert.X -= 8 << 4;
+			}
+
+			if (vert != m_vertex.buff[prev_tri[0]].XYZ && vert != m_vertex.buff[prev_tri[1]].XYZ && vert != m_vertex.buff[prev_tri[2]].XYZ &&
+				last_vert != m_vertex.buff[prev_tri[0]].XYZ && last_vert != m_vertex.buff[prev_tri[1]].XYZ && last_vert != m_vertex.buff[prev_tri[2]].XYZ)
 				return false;
 		}
 		// Degenerate triangles should've been culled already, so we can check indices.
@@ -2981,9 +2992,113 @@ GSState::PRIM_OVERLAP GSState::PrimitiveOverlap()
 	return overlap;
 }
 
+bool GSState::PrimitiveCoversWithoutGaps()
+{
+	if (m_primitive_covers_without_gaps.has_value())
+		return m_primitive_covers_without_gaps.value();
+
+	// Draw shouldn't be offset.
+	if (((m_r.eq32(GSVector4i::zero())).mask() & 0xff) != 0xff)
+	{
+		m_primitive_covers_without_gaps = false;
+		return false;
+	}
+
+	if (m_vt.m_primclass == GS_POINT_CLASS)
+	{
+		m_primitive_covers_without_gaps = (m_vertex.next < 2);
+		return m_primitive_covers_without_gaps.value();
+	}
+	else if (m_vt.m_primclass == GS_TRIANGLE_CLASS)
+	{
+		m_primitive_covers_without_gaps = (m_index.tail == 6 && TrianglesAreQuads());
+		return m_primitive_covers_without_gaps.value();
+	}
+	else if (m_vt.m_primclass != GS_SPRITE_CLASS)
+	{
+		m_primitive_covers_without_gaps = false;
+		return false;
+	}
+
+	// Simple case: one sprite.
+	if (m_index.tail == 2)
+	{
+		m_primitive_covers_without_gaps = true;
+		return true;
+	}
+
+	// Check that the height matches. Xenosaga 3 draws a letterbox around
+	// the FMV with a sprite at the top and bottom of the framebuffer.
+	const GSVertex* v = &m_vertex.buff[0];
+	const int first_dpY = v[1].XYZ.Y - v[0].XYZ.Y;
+	const int first_dpX = v[1].XYZ.X - v[0].XYZ.X;
+
+	// Horizontal Match.
+	if (((first_dpX + 8) >> 4) == m_r_no_scissor.z)
+	{
+		// Borrowed from MergeSprite() modified to calculate heights.
+		for (u32 i = 2; i < m_vertex.next; i += 2)
+		{
+			const int last_pY = v[i - 1].XYZ.Y;
+			const int dpY = v[i + 1].XYZ.Y - v[i].XYZ.Y;
+			if (std::abs(dpY - first_dpY) >= 16 || std::abs(static_cast<int>(v[i].XYZ.Y) - last_pY) >= 16)
+			{
+				m_primitive_covers_without_gaps = false;
+				return false;
+			}
+		}
+
+		m_primitive_covers_without_gaps = true;
+		return true;
+	}
+
+	// Vertical Match.
+	if (((first_dpY + 8) >> 4) == m_r_no_scissor.w)
+	{
+		// Borrowed from MergeSprite().
+		const int offset_X = m_context->XYOFFSET.OFX;
+		for (u32 i = 2; i < m_vertex.next; i += 2)
+		{
+			const int last_pX = v[i - 1].XYZ.X;
+			const int this_start_X = v[i].XYZ.X;
+			const int last_start_X = v[i - 2].XYZ.X;
+
+			const int dpX = v[i + 1].XYZ.X - v[i].XYZ.X;
+
+			if (this_start_X < last_start_X)
+			{
+				const int prev_X = last_start_X - offset_X;
+				if (std::abs(dpX - prev_X) >= 16 || std::abs(this_start_X - offset_X) >= 16)
+				{
+					m_primitive_covers_without_gaps = false;
+					return false;
+				}
+			}
+			else
+			{
+				if (std::abs(dpX - first_dpX) >= 16 || std::abs(this_start_X - last_pX) >= 16)
+				{
+					m_primitive_covers_without_gaps = false;
+					return false;
+				}
+			}
+		}
+
+		m_primitive_covers_without_gaps = true;
+		return true;
+	}
+
+	m_primitive_covers_without_gaps = false;
+	return false;
+}
+
 __forceinline bool GSState::IsAutoFlushDraw(u32 prim)
 {
 	if (!PRIM->TME || (GSConfig.UserHacks_AutoFlush == GSHWAutoFlushLevel::SpritesOnly && prim != GS_SPRITE))
+		return false;
+
+	// Not using the same channels.
+	if (!(GSUtil::GetChannelMask(m_context->TEX0.PSM) & GSUtil::GetChannelMask(m_context->FRAME.PSM, m_context->FRAME.FBMSK | ~(GSLocalMemory::m_psm[m_context->FRAME.PSM].fmsk))))
 		return false;
 
 	const u32 frame_mask = GSLocalMemory::m_psm[m_context->FRAME.PSM].fmsk;
@@ -3168,8 +3283,9 @@ __forceinline void GSState::HandleAutoFlush()
 		if (tex_rect.y == tex_rect.w)
 			tex_rect += GSVector4i::cxpr(0, 0, 0, 1);
 
+		const bool swap_index = index_swap && GSUtil::GetPrimClass(m_prev_env.PRIM.PRIM) != GS_SPRITE_CLASS;
 		// Get the last texture position from the last draw.
-		const GSVertex* v = &m_vertex.buff[m_index.buff[m_index.tail - (index_swap ? n : 1)]];
+		const GSVertex* v = &m_vertex.buff[m_index.buff[m_index.tail - (swap_index ? n : 1)]];
 
 		if (PRIM->FST)
 		{
@@ -3643,7 +3759,7 @@ static bool UsesRegionRepeat(int fix, int msk, int min, int max, int* min_out, i
 	return sets_bits || clears_bits;
 }
 
-GSState::TextureMinMaxResult GSState::GetTextureMinMax(GIFRegTEX0 TEX0, GIFRegCLAMP CLAMP, bool linear, bool clamp_to_tsize)
+GSState::TextureMinMaxResult GSState::GetTextureMinMax(GIFRegTEX0 TEX0, GIFRegCLAMP CLAMP, bool linear, bool clamp_to_tsize, bool no_gaps)
 {
 	// TODO: some of the +1s can be removed if linear == false
 
@@ -3752,7 +3868,7 @@ GSState::TextureMinMaxResult GSState::GetTextureMinMax(GIFRegTEX0 TEX0, GIFRegCL
 
 		// Adjust texture range when sprites get scissor clipped. Since we linearly interpolate, this
 		// optimization doesn't work when perspective correction is enabled.
-		if (m_vt.m_primclass == GS_SPRITE_CLASS && PRIM->FST == 1 && m_index.tail < 3)
+		if (m_vt.m_primclass == GS_SPRITE_CLASS && PRIM->FST == 1 && no_gaps)
 		{
 			// When coordinates are fractional, GS appears to draw to the right/bottom (effectively
 			// taking the ceiling), not to the top/left (taking the floor).
@@ -3768,50 +3884,55 @@ GSState::TextureMinMaxResult GSState::GetTextureMinMax(GIFRegTEX0 TEX0, GIFRegCL
 				const GSVertex* vert_first = &m_vertex.buff[m_index.buff[0]];
 				const GSVertex* vert_second = &m_vertex.buff[m_index.buff[1]];
 
-				// we need to check that it's not going to repeat over the non-clipped part
-				if (wms != CLAMP_REGION_REPEAT && (wms != CLAMP_REPEAT || (static_cast<int>(st.x) & ~tw_mask) == (static_cast<int>(st.z) & ~tw_mask)))
-				{
-					// Check if the UV coords are going in a different direction to the verts, if they match direction, no need to swap
-					const bool u_forward = vert_first->U < vert_second->U;
-					const bool x_forward = vert_first->XYZ.X < vert_second->XYZ.X;
-					const bool swap_x = u_forward != x_forward;
+				GSVector4 new_st = st;
+				// Check if the UV coords are going in a different direction to the verts, if they match direction, no need to swap
+				const bool u_forward = vert_first->U < vert_second->U;
+				const bool x_forward = vert_first->XYZ.X < vert_second->XYZ.X;
+				const bool swap_x = u_forward != x_forward;
 
-					if (int_rc.left < scissored_rc.left)
-					{
-						if(!swap_x)
-							st.x += floor(static_cast<float>(scissored_rc.left - int_rc.left) * grad.x);
-						else
-							st.z -= floor(static_cast<float>(scissored_rc.left - int_rc.left) * grad.x);
-					}
-					if (int_rc.right > scissored_rc.right)
-					{
-						if (!swap_x)
-							st.z -= floor(static_cast<float>(int_rc.right - scissored_rc.right) * grad.x);
-						else
-							st.x += floor(static_cast<float>(int_rc.right - scissored_rc.right) * grad.x);
-					}
+				if (int_rc.left < scissored_rc.left)
+				{
+					if (!swap_x)
+						new_st.x += floor(static_cast<float>(scissored_rc.left - int_rc.left) * grad.x);
+					else
+						new_st.z -= floor(static_cast<float>(scissored_rc.left - int_rc.left) * grad.x);
 				}
-				if (wmt != CLAMP_REGION_REPEAT && (wmt != CLAMP_REPEAT || (static_cast<int>(st.y) & ~th_mask) == (static_cast<int>(st.w) & ~th_mask)))
+				if (int_rc.right > scissored_rc.right)
 				{
-					// Check if the UV coords are going in a different direction to the verts, if they match direction, no need to swap
-					const bool v_forward = vert_first->V < vert_second->V;
-					const bool y_forward = vert_first->XYZ.Y < vert_second->XYZ.Y;
-					const bool swap_y = v_forward != y_forward;
+					if (!swap_x)
+						new_st.z -= floor(static_cast<float>(int_rc.right - scissored_rc.right) * grad.x);
+					else
+						new_st.x += floor(static_cast<float>(int_rc.right - scissored_rc.right) * grad.x);
+				}
+				// we need to check that it's not going to repeat over the non-clipped part
+				if (wms != CLAMP_REGION_REPEAT && (wms != CLAMP_REPEAT || (static_cast<int>(new_st.x) & ~tw_mask) == (static_cast<int>(new_st.z) & ~tw_mask)))
+				{
+					st.x = new_st.x;
+					st.z = new_st.z;
+				}
 
-					if (int_rc.top < scissored_rc.top)
-					{
-						if (!swap_y)
-							st.y += floor(static_cast<float>(scissored_rc.top - int_rc.top) * grad.y);
-						else
-							st.w -= floor(static_cast<float>(scissored_rc.top - int_rc.top) * grad.y);
-					}
-					if (int_rc.bottom > scissored_rc.bottom)
-					{
-						if (!swap_y)
-							st.w -= floor(static_cast<float>(int_rc.bottom - scissored_rc.bottom) * grad.y);
-						else
-							st.y += floor(static_cast<float>(int_rc.bottom - scissored_rc.bottom) * grad.y);
-					}
+				const bool v_forward = vert_first->V < vert_second->V;
+				const bool y_forward = vert_first->XYZ.Y < vert_second->XYZ.Y;
+				const bool swap_y = v_forward != y_forward;
+
+				if (int_rc.top < scissored_rc.top)
+				{
+					if (!swap_y)
+						new_st.y += floor(static_cast<float>(scissored_rc.top - int_rc.top) * grad.y);
+					else
+						new_st.w -= floor(static_cast<float>(scissored_rc.top - int_rc.top) * grad.y);
+				}
+				if (int_rc.bottom > scissored_rc.bottom)
+				{
+					if (!swap_y)
+						new_st.w -= floor(static_cast<float>(int_rc.bottom - scissored_rc.bottom) * grad.y);
+					else
+						new_st.y += floor(static_cast<float>(int_rc.bottom - scissored_rc.bottom) * grad.y);
+				}
+				if (wmt != CLAMP_REGION_REPEAT && (wmt != CLAMP_REPEAT || (static_cast<int>(new_st.y) & ~th_mask) == (static_cast<int>(new_st.w) & ~th_mask)))
+				{
+					st.y = new_st.y;
+					st.w = new_st.w;
 				}
 			}
 		}
@@ -3916,17 +4037,25 @@ void GSState::CalcAlphaMinMax(const int tex_alpha_min, const int tex_alpha_max)
 				case 1:
 					// If we're using the alpha from the texture, not the whole range, we can just use tex_alpha_min/max.
 					// AEM and TA0 re precomputed with GSBlock::ReadAndExpandBlock24, so already worked out for tex_alpha.
-					a.y = (tex_alpha_max < 500) ? min : (env.TEXA.AEM ? 0 : env.TEXA.TA0);
-					a.w = (tex_alpha_max < 500) ? max : env.TEXA.TA0;
+					a.y = (tex_alpha_max < INVALID_ALPHA_MINMAX) ? min : (env.TEXA.AEM ? 0 : env.TEXA.TA0);
+					a.w = (tex_alpha_max < INVALID_ALPHA_MINMAX) ? max : env.TEXA.TA0;
 					break;
 				case 2:
 					// If we're using the alpha from the texture, not the whole range, we can just use tex_alpha_min/max.
 					// AEM, TA0 and TA1 are precomputed with GSBlock::ReadAndExpandBlock16, so already worked out for tex_alpha.
-					a.y = (tex_alpha_max < 500) ? min : (env.TEXA.AEM ? 0 : std::min(env.TEXA.TA0, env.TEXA.TA1));
-					a.w = (tex_alpha_max < 500) ? max : std::max(env.TEXA.TA0, env.TEXA.TA1);
+					a.y = (tex_alpha_max < INVALID_ALPHA_MINMAX) ? min : (env.TEXA.AEM ? 0 : std::min(env.TEXA.TA0, env.TEXA.TA1));
+					a.w = (tex_alpha_max < INVALID_ALPHA_MINMAX) ? max : std::max(env.TEXA.TA0, env.TEXA.TA1);
 					break;
 				case 3:
-					m_mem.m_clut.GetAlphaMinMax32(a.y, a.w);
+					if (tex_alpha_max < INVALID_ALPHA_MINMAX)
+					{
+						a.y = min;
+						a.w = max;
+					}
+					else
+					{
+						m_mem.m_clut.GetAlphaMinMax32(a.y, a.w);
+					}
 					break;
 				default:
 					ASSUME(0);

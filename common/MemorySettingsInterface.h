@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2002-2023 PCSX2 Dev Team
+// SPDX-FileCopyrightText: 2002-2024 PCSX2 Dev Team
 // SPDX-License-Identifier: LGPL-3.0+
 
 #pragma once
@@ -12,9 +12,11 @@ public:
 	MemorySettingsInterface();
 	~MemorySettingsInterface();
 
-	bool Save() override;
+	bool Save(Error* error = nullptr) override;
 
 	void Clear() override;
+
+	bool IsEmpty() override;
 
 	bool GetIntValue(const char* section, const char* key, s32* value) const override;
 	bool GetUIntValue(const char* section, const char* key, u32* value) const override;
@@ -22,6 +24,7 @@ public:
 	bool GetDoubleValue(const char* section, const char* key, double* value) const override;
 	bool GetBoolValue(const char* section, const char* key, bool* value) const override;
 	bool GetStringValue(const char* section, const char* key, std::string* value) const override;
+	bool GetStringValue(const char* section, const char* key, SmallStringBase* value) const override;
 
 	void SetIntValue(const char* section, const char* key, s32 value) override;
 	void SetUIntValue(const char* section, const char* key, u32 value) override;
@@ -36,6 +39,8 @@ public:
 	bool ContainsValue(const char* section, const char* key) const override;
 	void DeleteValue(const char* section, const char* key) override;
 	void ClearSection(const char* section) override;
+	void RemoveSection(const char* section) override;
+	void RemoveEmptySections() override;
 
 	std::vector<std::string> GetStringList(const char* section, const char* key) const override;
 	void SetStringList(const char* section, const char* key, const std::vector<std::string>& items) override;

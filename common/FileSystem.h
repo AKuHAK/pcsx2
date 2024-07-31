@@ -1,8 +1,10 @@
-// SPDX-FileCopyrightText: 2002-2023 PCSX2 Dev Team
+// SPDX-FileCopyrightText: 2002-2024 PCSX2 Dev Team
 // SPDX-License-Identifier: LGPL-3.0+
 
 #pragma once
+
 #include "Pcsx2Defs.h"
+
 #include <cstdio>
 #include <ctime>
 #include <memory>
@@ -85,10 +87,10 @@ namespace FileSystem
 	bool DirectoryIsEmpty(const char* path);
 
 	/// Delete file
-	bool DeleteFilePath(const char* path);
+	bool DeleteFilePath(const char* path, Error* error = nullptr);
 
 	/// Rename file
-	bool RenamePath(const char* OldPath, const char* NewPath);
+	bool RenamePath(const char* OldPath, const char* NewPath, Error* error = nullptr);
 
 	/// Deleter functor for managed file pointers
 	struct FileDeleter
@@ -134,11 +136,11 @@ namespace FileSystem
 	/// if the directory already exists, the return value will be true.
 	/// if Recursive is specified, all parent directories will be created
 	/// if they do not exist.
-	bool CreateDirectoryPath(const char* path, bool recursive);
+	bool CreateDirectoryPath(const char* path, bool recursive, Error* error = nullptr);
 
 	/// Creates a directory if it doesn't already exist.
 	/// Returns false if it does not exist and creation failed.
-	bool EnsureDirectoryExists(const char* path, bool recursive);
+	bool EnsureDirectoryExists(const char* path, bool recursive, Error* error = nullptr);
 
 	/// Removes a directory.
 	bool DeleteDirectory(const char* path);
@@ -162,6 +164,12 @@ namespace FileSystem
 	/// Does not apply the compression flag recursively if called for a directory.
 	/// Does nothing and returns false on non-Windows platforms.
 	bool SetPathCompression(const char* path, bool enable);
+
+#ifdef _WIN32
+	// Path limit remover, but also converts to a wide string at the same time.
+	bool GetWin32Path(std::wstring* dest, std::string_view str);
+	std::wstring GetWin32Path(std::string_view str);
+#endif
 
 	/// Abstracts a POSIX file lock.
 #ifndef _WIN32

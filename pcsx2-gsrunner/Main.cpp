@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2002-2023 PCSX2 Dev Team
+// SPDX-FileCopyrightText: 2002-2024 PCSX2 Dev Team
 // SPDX-License-Identifier: LGPL-3.0+
 
 #include <atomic>
@@ -88,7 +88,8 @@ static u32 s_total_drawn_frames = 0;
 
 bool GSRunner::InitializeConfig()
 {
-	if (!EmuFolders::InitializeCriticalFolders())
+	EmuFolders::SetAppRoot();
+	if (!EmuFolders::SetResourcesDirectory() || !EmuFolders::SetDataDirectory(nullptr))
 		return false;
 
 	const char* error;
@@ -355,7 +356,11 @@ void Host::OnCaptureStopped()
 {
 }
 
-void Host::RequestExit(bool allow_confirm)
+void Host::RequestExitApplication(bool allow_confirm)
+{
+}
+
+void Host::RequestExitBigPicture()
 {
 }
 

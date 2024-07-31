@@ -3,6 +3,7 @@
 
 #include "common/Assertions.h"
 #include "common/StringUtil.h"
+#include "common/ScopedGuard.h"
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -216,6 +217,8 @@ SocketAdapter::SocketAdapter()
 		wsa_init = true;
 #endif
 
+	sendThreadId = std::this_thread::get_id();
+
 	initialized = true;
 }
 
@@ -233,6 +236,13 @@ bool SocketAdapter::recv(NetPacket* pkt)
 {
 	if (NetAdapter::recv(pkt))
 		return true;
+
+	ScopedGuard cleanup([&]() {
+		// Garbage collect closed connections
+		for (BaseSession* s : deleteQueueRecvThread)
+			delete s;
+		deleteQueueRecvThread.clear();
+	});
 
 	EthernetFrame* bFrame;
 	if (!vRecBuffer.Dequeue(&bFrame))
@@ -281,6 +291,14 @@ bool SocketAdapter::send(NetPacket* pkt)
 	InspectSend(pkt);
 	if (NetAdapter::send(pkt))
 		return true;
+
+	pxAssert(std::this_thread::get_id() == sendThreadId);
+	ScopedGuard cleanup([&]() {
+		// Garbage collect closed connections
+		for (BaseSession* s : deleteQueueSendThread)
+			delete s;
+		deleteQueueSendThread.clear();
+	});
 
 	EthernetFrame frame(pkt);
 
@@ -513,12 +531,20 @@ bool SocketAdapter::SendUDP(ConnectionKey Key, IP_Packet* ipPkt)
 
 				connections.Add(fKey, fPort);
 				fixedUDPPorts.Add(udp.sourcePort, fPort);
+
+				fPort->Init();
 			}
 
 			Console.WriteLn("DEV9: Socket: Creating New UDP Connection from FixedPort %d to %d", udp.sourcePort, udp.destinationPort);
 			s = fPort->NewClientSession(Key,
 				ipPkt->destinationIP == dhcpServer.broadcastIP || ipPkt->destinationIP == IP_Address{{{255, 255, 255, 255}}},
 				(ipPkt->destinationIP.bytes[0] & 0xF0) == 0xE0);
+
+			if (s == nullptr)
+			{
+				Console.Error("DEV9: Socket: Failed to Create New UDP Connection from FixedPort");
+				return false;
+			}
 		}
 		else
 		{
@@ -548,9 +574,12 @@ void SocketAdapter::HandleConnectionClosed(BaseSession* sender)
 {
 	const ConnectionKey key = sender->key;
 	connections.Remove(key);
-	//Note, we delete something that is calling us
-	//this is probably going to cause issues
-	delete sender;
+
+	// Defer deleting the connection untill we have left the calling session's callstack
+	if (std::this_thread::get_id() == sendThreadId)
+		deleteQueueSendThread.push_back(sender);
+	else
+		deleteQueueRecvThread.push_back(sender);
 
 	switch (key.protocol)
 	{
@@ -577,9 +606,12 @@ void SocketAdapter::HandleFixedPortClosed(BaseSession* sender)
 	ConnectionKey key = sender->key;
 	connections.Remove(key);
 	fixedUDPPorts.Remove(key.ps2Port);
-	//Note, we delete something that is calling us
-	//this is probably going to cause issues
-	delete sender;
+
+	// Defer deleting the connection untill we have left the calling session's callstack
+	if (std::this_thread::get_id() == sendThreadId)
+		deleteQueueSendThread.push_back(sender);
+	else
+		deleteQueueRecvThread.push_back(sender);
 
 	Console.WriteLn("DEV9: Socket: Closed Dead UDP Fixed Port to %d", key.ps2Port);
 }
@@ -603,6 +635,16 @@ SocketAdapter::~SocketAdapter()
 	}
 	connections.Clear();
 	fixedUDPPorts.Clear(); //fixedUDP sessions already deleted via connections
+
+	//Clear out any delete queues
+	DevCon.WriteLn("DEV9: Socket: Found %d Connections in send delete queue", deleteQueueSendThread.size());
+	DevCon.WriteLn("DEV9: Socket: Found %d Connections in recv delete queue", deleteQueueRecvThread.size());
+	for (BaseSession* s : deleteQueueSendThread)
+		delete s;
+	for (BaseSession* s : deleteQueueRecvThread)
+		delete s;
+	deleteQueueSendThread.clear();
+	deleteQueueRecvThread.clear();
 
 	//Clear out vRecBuffer
 	while (!vRecBuffer.IsQueueEmpty())

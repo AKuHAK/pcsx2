@@ -97,7 +97,10 @@ bool GSRenderer::Merge(int field)
 	PCRTCDisplays.CheckSameSource();
 
 	if (!PCRTCDisplays.PCRTCDisplays[0].enabled && !PCRTCDisplays.PCRTCDisplays[1].enabled)
+	{
+		m_real_size = GSVector2i(0, 0);
 		return false;
+	}
 
 	// Need to do this here, if the user has Anti-Blur enabled, these offsets can get wiped out/changed.
 	const bool game_deinterlacing = (m_regs->DISP[0].DISPFB.DBY != PCRTCDisplays.PCRTCDisplays[0].prevFramebufferReg.DBY) !=
@@ -127,7 +130,10 @@ bool GSRenderer::Merge(int field)
 	}
 
 	if (!tex[0] && !tex[1])
+	{
+		m_real_size = GSVector2i(0, 0);
 		return false;
+	}
 
 	s_n++;
 
@@ -416,13 +422,13 @@ static GSVector4i CalculateDrawSrcRect(const GSTexture* src, const GSVector2i re
 static const char* GetScreenshotSuffix()
 {
 	static constexpr const char* suffixes[static_cast<u8>(GSScreenshotFormat::Count)] = {
-		"png", "jpg"};
+		"png", "jpg", "webp"};
 	return suffixes[static_cast<u8>(GSConfig.ScreenshotFormat)];
 }
 
 static void CompressAndWriteScreenshot(std::string filename, u32 width, u32 height, std::vector<u32> pixels)
 {
-	Common::RGBA8Image image;
+	RGBA8Image image;
 	image.SetPixels(width, height, std::move(pixels));
 
 	std::string key(fmt::format("GSScreenshot_{}", filename));

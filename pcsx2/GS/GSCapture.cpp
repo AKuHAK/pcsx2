@@ -8,8 +8,8 @@
 #include "GS/Renderers/Common/GSDevice.h"
 #include "GS/Renderers/Common/GSTexture.h"
 #include "SPU2/spu2.h"
-#include "SPU2/SndOut.h"
 #include "Host.h"
+#include "Host/AudioStream.h"
 #include "IconsFontAwesome5.h"
 #include "common/Assertions.h"
 #include "common/Console.h"
@@ -83,7 +83,16 @@ extern "C" {
 	X(avio_open) \
 	X(avio_closep)
 
+#if LIBAVUTIL_VERSION_MAJOR < 57
+#define AVUTIL_57_IMPORTS(X)
+#else
+#define AVUTIL_57_IMPORTS(X) \
+	X(av_channel_layout_default) \
+	X(av_channel_layout_copy)
+#endif
+
 #define VISIT_AVUTIL_IMPORTS(X) \
+	AVUTIL_57_IMPORTS(X) \
 	X(av_frame_alloc) \
 	X(av_frame_get_buffer) \
 	X(av_frame_free) \
@@ -124,7 +133,7 @@ namespace GSCapture
 {
 	static constexpr u32 NUM_FRAMES_IN_FLIGHT = 3;
 	static constexpr u32 MAX_PENDING_FRAMES = NUM_FRAMES_IN_FLIGHT * 2;
-	static constexpr u32 AUDIO_BUFFER_SIZE = Common::AlignUpPow2((MAX_PENDING_FRAMES * 48000) / 60, SndOutPacketSize);
+	static constexpr u32 AUDIO_BUFFER_SIZE = Common::AlignUpPow2((MAX_PENDING_FRAMES * 48000) / 60, AudioStream::CHUNK_SIZE);
 	static constexpr u32 AUDIO_CHANNELS = 2;
 
 	struct PendingFrame
@@ -222,11 +231,11 @@ VISIT_SWRESAMPLE_IMPORTS(DECLARE_IMPORT);
 #ifndef USE_LINKED_FFMPEG
 static void UnloadFFmpegFunctions(std::unique_lock<std::mutex>& lock);
 
-static Common::DynamicLibrary s_avcodec_library;
-static Common::DynamicLibrary s_avformat_library;
-static Common::DynamicLibrary s_avutil_library;
-static Common::DynamicLibrary s_swscale_library;
-static Common::DynamicLibrary s_swresample_library;
+static DynamicLibrary s_avcodec_library;
+static DynamicLibrary s_avformat_library;
+static DynamicLibrary s_avutil_library;
+static DynamicLibrary s_swscale_library;
+static DynamicLibrary s_swresample_library;
 static bool s_library_loaded = false;
 static std::mutex s_load_mutex;
 
@@ -236,9 +245,9 @@ bool GSCapture::LoadFFmpeg(bool report_errors)
 	if (s_library_loaded)
 		return true;
 
-	const auto open_dynlib = [](Common::DynamicLibrary& lib, const char* name, int major_version) {
-		std::string full_name(Common::DynamicLibrary::GetVersionedFilename(name, major_version));
-		return lib.Open(full_name.c_str());
+	const auto open_dynlib = [](DynamicLibrary& lib, const char* name, int major_version) {
+		std::string full_name(DynamicLibrary::GetVersionedFilename(name, major_version));
+		return lib.Open(full_name.c_str(), nullptr);
 	};
 
 	bool result = true;
@@ -648,10 +657,15 @@ bool GSCapture::BeginCapture(float fps, GSVector2i recommendedResolution, float 
 		const s32 sample_rate = SPU2::GetConsoleSampleRate();
 		s_audio_codec_context->codec_type = AVMEDIA_TYPE_AUDIO;
 		s_audio_codec_context->bit_rate = GSConfig.AudioCaptureBitrate * 1000;
-		s_audio_codec_context->channels = AUDIO_CHANNELS;
 		s_audio_codec_context->sample_fmt = AV_SAMPLE_FMT_S16;
 		s_audio_codec_context->sample_rate = sample_rate;
 		s_audio_codec_context->time_base = {1, sample_rate};
+#if LIBAVUTIL_VERSION_MAJOR < 57
+		s_audio_codec_context->channels = AUDIO_CHANNELS;
+		s_audio_codec_context->channel_layout = AV_CH_LAYOUT_STEREO;
+#else
+		wrap_av_channel_layout_default(&s_audio_codec_context->ch_layout, AUDIO_CHANNELS);
+#endif
 
 		bool supports_format = false;
 		for (const AVSampleFormat* p = acodec->sample_fmts; *p != AV_SAMPLE_FMT_NONE; p++)
@@ -689,8 +703,7 @@ bool GSCapture::BeginCapture(float fps, GSVector2i recommendedResolution, float 
 			}
 		}
 
-		// TODO: Check channel layout support, this is different in v4.x and v5.x.
-		s_audio_codec_context->channel_layout = AV_CH_LAYOUT_STEREO;
+		// TODO: Check channel layout support
 
 		if (GSConfig.EnableAudioCaptureParameters)
 		{
@@ -716,7 +729,7 @@ bool GSCapture::BeginCapture(float fps, GSVector2i recommendedResolution, float 
 
 		// Use packet size for frame if it supports it... but most don't.
 		if (acodec->capabilities & AV_CODEC_CAP_VARIABLE_FRAME_SIZE)
-			s_audio_frame_size = SndOutPacketSize;
+			s_audio_frame_size = AudioStream::CHUNK_SIZE;
 		else
 			s_audio_frame_size = s_audio_codec_context->frame_size;
 		if (s_audio_frame_size >= AUDIO_BUFFER_SIZE)
@@ -738,9 +751,13 @@ bool GSCapture::BeginCapture(float fps, GSVector2i recommendedResolution, float 
 		}
 
 		s_converted_audio_frame->format = s_audio_codec_context->sample_fmt;
+		s_converted_audio_frame->nb_samples = s_audio_frame_size;
+#if LIBAVUTIL_VERSION_MAJOR < 57
 		s_converted_audio_frame->channels = AUDIO_CHANNELS;
 		s_converted_audio_frame->channel_layout = s_audio_codec_context->channel_layout;
-		s_converted_audio_frame->nb_samples = s_audio_frame_size;
+#else
+		wrap_av_channel_layout_copy(&s_converted_audio_frame->ch_layout, &s_audio_codec_context->ch_layout);
+#endif
 		res = wrap_av_frame_get_buffer(s_converted_audio_frame, 0);
 		if (res < 0)
 		{
@@ -844,7 +861,7 @@ bool GSCapture::DeliverVideoFrame(GSTexture* stex)
 		}
 
 #ifdef PCSX2_DEVBUILD
-		pf.tex->SetDebugName(TinyString::from_fmt("GSCapture {}x{} Download Texture", stex->GetWidth(), stex->GetHeight()));
+		pf.tex->SetDebugName(TinyString::from_format("GSCapture {}x{} Download Texture", stex->GetWidth(), stex->GetHeight()));
 #endif
 	}
 
@@ -1053,7 +1070,7 @@ void GSCapture::DeliverAudioPacket(const s16* frames)
 	// through and clear them out for the next capture. If we happen to fill the buffer, *then* we'll lock, and check if
 	// the capture has stopped.
 
-	static constexpr u32 num_frames = static_cast<u32>(SndOutPacketSize);
+	static constexpr u32 num_frames = AudioStream::CHUNK_SIZE;
 
 	if ((AUDIO_BUFFER_SIZE - s_audio_buffer_size.load(std::memory_order_acquire)) < num_frames)
 	{
@@ -1096,7 +1113,7 @@ bool GSCapture::ProcessAudioPackets(s64 video_pts)
 	while (pending_frames > 0 && (!s_video_codec_context || wrap_av_compare_ts(video_pts, s_video_codec_context->time_base,
 																s_next_audio_pts, s_audio_codec_context->time_base) > 0))
 	{
-		pxAssert(pending_frames >= static_cast<u32>(SndOutPacketSize));
+		pxAssert(pending_frames >= AudioStream::CHUNK_SIZE);
 
 		// In case the encoder is still using it.
 		if (s_audio_frame_pos == 0)
@@ -1361,7 +1378,7 @@ TinyString GSCapture::GetElapsedTime()
 
 	TinyString ret;
 	if (seconds >= 0)
-		ret.fmt("{:02d}:{:02d}:{:02d}", seconds / 3600, (seconds % 3600) / 60, seconds % 60);
+		ret.format("{:02d}:{:02d}:{:02d}", seconds / 3600, (seconds % 3600) / 60, seconds % 60);
 	return ret;
 }
 

@@ -1,16 +1,31 @@
 #-------------------------------------------------------------------------------
 #                       Search all libraries on the system
 #-------------------------------------------------------------------------------
-if(EXISTS ${PROJECT_SOURCE_DIR}/.git)
-	find_package(Git)
+find_package(Git)
+
+# Require threads on all OSes.
+find_package(Threads REQUIRED)
+
+# Dependency libraries.
+# On macOS, Mono.framework contains an ancient version of libpng.  We don't want that.
+# Avoid it by telling cmake to avoid finding frameworks while we search for libpng.
+set(FIND_FRAMEWORK_BACKUP ${CMAKE_FIND_FRAMEWORK})
+set(CMAKE_FIND_FRAMEWORK NEVER)
+find_package(PNG 1.6.40 REQUIRED)
+find_package(JPEG REQUIRED) # No version because flatpak uses libjpeg-turbo.
+find_package(ZLIB REQUIRED) # v1.3, but Mac uses the SDK version.
+find_package(Zstd 1.5.5 REQUIRED)
+find_package(LZ4 REQUIRED)
+find_package(WebP REQUIRED) # v1.3.2, spews an error on Linux because no pkg-config.
+find_package(SDL2 2.30.3 REQUIRED)
+find_package(Freetype 2.11.1 REQUIRED)
+
+if(USE_VULKAN)
+	find_package(Shaderc REQUIRED)
 endif()
+
+# Platform-specific dependencies.
 if (WIN32)
-	# We bundle everything on Windows
-	add_subdirectory(3rdparty/zlib EXCLUDE_FROM_ALL)
-	add_subdirectory(3rdparty/libpng EXCLUDE_FROM_ALL)
-	add_subdirectory(3rdparty/libwebp EXCLUDE_FROM_ALL)
-	add_subdirectory(3rdparty/zstd EXCLUDE_FROM_ALL)
-	add_subdirectory(3rdparty/lz4 EXCLUDE_FROM_ALL)
 	add_subdirectory(3rdparty/D3D12MemAlloc EXCLUDE_FROM_ALL)
 	add_subdirectory(3rdparty/winpixeventruntime EXCLUDE_FROM_ALL)
 	set(FFMPEG_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/3rdparty/ffmpeg/include")
@@ -21,21 +36,8 @@ if (WIN32)
 	set(WIL_BUILD_PACKAGING OFF CACHE BOOL "")
 	add_subdirectory(3rdparty/wil EXCLUDE_FROM_ALL)
 else()
-	find_package(PCAP REQUIRED)
-
-	# Using find_package OpenGL without either setting your opengl preference to GLVND or LEGACY
-	# is deprecated as of cmake 3.11.
-	if(USE_OPENGL)
-		set(OpenGL_GL_PREFERENCE GLVND)
-		find_package(OpenGL REQUIRED)
-	endif()
-	# On macOS, Mono.framework contains an ancient version of libpng.  We don't want that.
-	# Avoid it by telling cmake to avoid finding frameworks while we search for libpng.
-	set(FIND_FRAMEWORK_BACKUP ${CMAKE_FIND_FRAMEWORK})
-	set(CMAKE_FIND_FRAMEWORK NEVER)
-	find_package(PNG REQUIRED)
 	find_package(CURL REQUIRED)
-	set(CMAKE_FIND_FRAMEWORK ${FIND_FRAMEWORK_BACKUP})
+	find_package(PCAP REQUIRED)
 	find_package(Vtune)
 
 	# Use bundled ffmpeg v4.x.x headers if we can't locate it in the system.
@@ -46,19 +48,10 @@ else()
 		set(FFMPEG_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/3rdparty/ffmpeg/include")
 	endif()
 
-	find_package(ZLIB REQUIRED)
-	find_package(Zstd REQUIRED)
-	find_package(LZ4 REQUIRED)
-	find_package(WebP REQUIRED)
-
 	## Use CheckLib package to find module
 	include(CheckLib)
 
 	if(UNIX AND NOT APPLE)
-		if(USE_OPENGL)
-			check_lib(EGL EGL EGL/egl.h)
-		endif()
-
 		if(LINUX)
 			check_lib(AIO aio libaio.h)
 			check_lib(LIBUDEV libudev libudev.h)
@@ -81,13 +74,9 @@ else()
 		find_package(PkgConfig REQUIRED)
 		pkg_check_modules(DBUS REQUIRED dbus-1)
 	endif()
-endif(WIN32)
+endif()
 
-# Require threads on all OSes.
-find_package(Threads REQUIRED)
-
-# Also need SDL2.
-find_package(SDL2 2.30.1 REQUIRED)
+set(CMAKE_FIND_FRAMEWORK ${FIND_FRAMEWORK_BACKUP})
 
 set(ACTUALLY_ENABLE_TESTS ${ENABLE_TESTS})
 if(ENABLE_TESTS)
@@ -112,7 +101,6 @@ add_subdirectory(3rdparty/soundtouch EXCLUDE_FROM_ALL)
 add_library(fast_float INTERFACE)
 target_include_directories(fast_float INTERFACE 3rdparty/rapidyaml/rapidyaml/ext/c4core/src/c4/ext/fast_float/include)
 
-add_subdirectory(3rdparty/jpgd EXCLUDE_FROM_ALL)
 add_subdirectory(3rdparty/simpleini EXCLUDE_FROM_ALL)
 add_subdirectory(3rdparty/imgui EXCLUDE_FROM_ALL)
 add_subdirectory(3rdparty/cpuinfo EXCLUDE_FROM_ALL)
@@ -122,13 +110,13 @@ add_subdirectory(3rdparty/libzip EXCLUDE_FROM_ALL)
 add_subdirectory(3rdparty/rcheevos EXCLUDE_FROM_ALL)
 add_subdirectory(3rdparty/rapidjson EXCLUDE_FROM_ALL)
 add_subdirectory(3rdparty/discord-rpc EXCLUDE_FROM_ALL)
+add_subdirectory(3rdparty/freesurround EXCLUDE_FROM_ALL)
 
 if(USE_OPENGL)
 	add_subdirectory(3rdparty/glad EXCLUDE_FROM_ALL)
 endif()
 
 if(USE_VULKAN)
-	add_subdirectory(3rdparty/glslang EXCLUDE_FROM_ALL)
 	add_subdirectory(3rdparty/vulkan-headers EXCLUDE_FROM_ALL)
 endif()
 

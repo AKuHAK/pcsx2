@@ -122,6 +122,8 @@ private:
 	} m_tr;
 
 protected:
+	static constexpr int INVALID_ALPHA_MINMAX = 500;
+
 	GSVertex m_v = {};
 	float m_q = 1.0f;
 	GSVector4i m_scissor_cull_min = {};
@@ -163,7 +165,7 @@ protected:
 	GSVertexTrace::VertexAlpha& GetAlphaMinMax()
 	{
 		if (!m_vt.m_alpha.valid)
-			CalcAlphaMinMax(0, 500);
+			CalcAlphaMinMax(0, INVALID_ALPHA_MINMAX);
 		return m_vt.m_alpha;
 	}
 	struct TextureMinMaxResult
@@ -180,7 +182,7 @@ protected:
 		GSVector4i coverage; ///< Part of the texture used
 		u8 uses_boundary;    ///< Whether or not the usage touches the left, top, right, or bottom edge (and therefore needs wrap modes preserved)
 	};
-	TextureMinMaxResult GetTextureMinMax(GIFRegTEX0 TEX0, GIFRegCLAMP CLAMP, bool linear, bool clamp_to_tsize);
+	TextureMinMaxResult GetTextureMinMax(GIFRegTEX0 TEX0, GIFRegCLAMP CLAMP, bool linear, bool clamp_to_tsize, bool no_gaps);
 	bool TryAlphaTest(u32& fm, u32& zm);
 	bool IsOpaque();
 	bool IsMipMapDraw();
@@ -214,11 +216,13 @@ public:
 	bool m_texflush_flag = false;
 	bool m_isPackedUV_HackFlag = false;
 	bool m_channel_shuffle = false;
-	bool m_can_correct_alpha = false;
 	u8 m_scanmask_used = 0;
 	u32 m_dirty_gs_regs = 0;
 	int m_backed_up_ctx = 0;
 	std::vector<GSUploadQueue> m_draw_transfers;
+	std::optional<bool> m_primitive_covers_without_gaps;
+	GSVector4i m_r = {};
+	GSVector4i m_r_no_scissor = {};
 
 	static int s_n;
 	static int s_last_transfer_draw_n;
@@ -404,8 +408,9 @@ public:
 
 	void DumpVertices(const std::string& filename);
 
-	bool TrianglesAreQuads() const;
+	bool TrianglesAreQuads(bool shuffle_check = false) const;
 	PRIM_OVERLAP PrimitiveOverlap();
+	bool PrimitiveCoversWithoutGaps();
 	GIFRegTEX0 GetTex0Layer(u32 lod);
 };
 

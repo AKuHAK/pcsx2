@@ -3,7 +3,6 @@
 
 #include "common/Assertions.h"
 #include "common/FileSystem.h"
-#include "common/StringUtil.h"
 
 #include "ATA.h"
 #include "DEV9/DEV9.h"
@@ -41,6 +40,8 @@ int ATA::Open(const std::string& hddPath)
 	readBuffer = new u8[readBufferLen];
 	memset(sceSec, 0, sizeof(sceSec));
 
+	DevCon.WriteLn("DEV9: ATA: HddFile : %s", hddPath.c_str());
+
 	//Open File
 	if (!FileSystem::FileExists(hddPath.c_str()))
 		return -1;
@@ -49,7 +50,7 @@ int ATA::Open(const std::string& hddPath)
 	const s64 size = hddImage ? FileSystem::FSize64(hddImage) : -1;
 	if (!hddImage || size < 0)
 	{
-		Console.Error("Failed to open HDD image '%s'", hddPath.c_str());
+		Console.Error("DEV9: ATA: Failed to open HDD image '%s'", hddPath.c_str());
 		return -1;
 	}
 
@@ -117,7 +118,7 @@ void ATA::InitSparseSupport(const std::string& hddPath)
 #ifdef _WIN32
 	hddSparse = false;
 
-	const std::wstring wHddPath(StringUtil::UTF8StringToWideString(hddPath));
+	const std::wstring wHddPath = FileSystem::GetWin32Path(hddPath);
 	const DWORD fileAttributes = GetFileAttributes(wHddPath.c_str());
 	hddSparse = fileAttributes & FILE_ATTRIBUTE_SPARSE_FILE;
 

@@ -40,6 +40,7 @@
 #include "common/FileSystem.h"
 
 #include <QtCore/QDateTime>
+#include <QtCore/QDir>
 #include <QtGui/QCloseEvent>
 #include <QtWidgets/QFileDialog>
 #include <QtWidgets/QInputDialog>
@@ -658,6 +659,8 @@ void MainWindow::onShowAdvancedSettingsToggled(bool checked)
 	{
 		QCheckBox* cb = new QCheckBox(tr("Do not show again"));
 		QMessageBox mb(this);
+		mb.setWindowIcon(QtHost::GetAppIcon());
+		mb.setWindowModality(Qt::WindowModal);
 		mb.setWindowTitle(tr("Show Advanced Settings"));
 		mb.setText(tr("Changing advanced settings can have unpredictable effects on games, including graphical glitches, lock-ups, and "
 					  "even corrupted save files. "
@@ -727,7 +730,7 @@ void MainWindow::onToolsVideoCaptureToggled(bool checked)
 	const QString filter(tr("%1 Files (*.%2)").arg(container.toUpper()).arg(container));
 
 	QString path(QStringLiteral("%1.%2").arg(QString::fromStdString(GSGetBaseVideoFilename())).arg(container));
-	path = QFileDialog::getSaveFileName(this, tr("Video Capture"), path, filter);
+	path = QDir::toNativeSeparators(QFileDialog::getSaveFileName(this, tr("Video Capture"), path, filter));
 	if (path.isEmpty())
 		return;
 
@@ -773,7 +776,9 @@ void MainWindow::onAchievementsHardcoreModeChanged(bool enabled)
 	m_ui.actionDebugger->setDisabled(enabled);
 	if (enabled)
 	{
-		if (m_debugger_window)
+		// If PauseOnEntry is enabled, we prompt the user to disable Hardcore Mode
+		// or cancel the action later, so we should keep the debugger around
+		if (m_debugger_window && !DebugInterface::getPauseOnEntry())
 		{
 			m_debugger_window->close();
 			m_debugger_window->deleteLater();
@@ -1181,6 +1186,8 @@ bool MainWindow::requestShutdown(bool allow_confirm, bool allow_save_to_state, b
 		QMessageBox msgbox(lock.getDialogParent());
 		msgbox.setIcon(QMessageBox::Question);
 		msgbox.setWindowTitle(tr("Confirm Shutdown"));
+		msgbox.setWindowModality(Qt::WindowModal);
+		msgbox.setWindowIcon(QtHost::GetAppIcon());
 		msgbox.setText(tr("Are you sure you want to shut down the virtual machine?"));
 
 		QCheckBox* save_cb = new QCheckBox(tr("Save State For Resume"), &msgbox);
@@ -1425,8 +1432,8 @@ void MainWindow::onStartBIOSActionTriggered()
 void MainWindow::onChangeDiscFromFileActionTriggered()
 {
 	VMLock lock(pauseAndLockVM());
-	QString filename =
-		QFileDialog::getOpenFileName(lock.getDialogParent(), tr("Select Disc Image"), QString(), tr(DISC_IMAGE_FILTER), nullptr);
+	QString filename = QDir::toNativeSeparators(
+		QFileDialog::getOpenFileName(lock.getDialogParent(), tr("Select Disc Image"), QString(), tr(DISC_IMAGE_FILTER), nullptr));
 	if (filename.isEmpty())
 		return;
 
@@ -1595,6 +1602,7 @@ void MainWindow::checkForUpdates(bool display_message, bool force_check)
 		{
 			QMessageBox mbox(this);
 			mbox.setWindowTitle(tr("Updater Error"));
+			mbox.setWindowIcon(QtHost::GetAppIcon());
 			mbox.setTextFormat(Qt::RichText);
 
 			QString message;
@@ -1913,7 +1921,14 @@ void MainWindow::onVMStopped()
 {
 	s_vm_valid = false;
 	s_vm_paused = false;
-	m_last_fps_status = QString();
+
+	const QString empty_string;
+	m_last_fps_status = empty_string;
+	m_status_renderer_widget->setText(empty_string);
+	m_status_resolution_widget->setText(empty_string);
+	m_status_fps_widget->setText(empty_string);
+	m_status_vps_widget->setText(empty_string);
+
 	updateEmulationActions(false, false, false);
 	updateGameDependentActions();
 	updateWindowTitle();
@@ -1972,6 +1987,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
 	// If there's no VM, we can just exit as normal.
 	if (!s_vm_valid || !m_display_created)
 	{
+		m_is_closing = true;
 		saveStateToConfig();
 		if (m_display_created)
 			g_emu_thread->stopFullscreenUI();
@@ -2213,6 +2229,13 @@ std::optional<WindowInfo> MainWindow::acquireRenderWindow(bool recreate_window, 
 	// if we're going to surfaceless, we're done here
 	if (surfaceless)
 		return WindowInfo();
+
+	// very low-chance race here, if the user starts the fullscreen UI, and immediately closes the window.
+	if (m_is_closing)
+	{
+		m_display_created = false;
+		return std::nullopt;
+	}
 
 	createDisplayWidget(fullscreen, render_to_main);
 
@@ -2671,7 +2694,9 @@ std::optional<bool> MainWindow::promptForResumeState(const QString& save_state_p
 
 	QMessageBox msgbox(this);
 	msgbox.setIcon(QMessageBox::Question);
+	msgbox.setWindowIcon(QtHost::GetAppIcon());
 	msgbox.setWindowTitle(tr("Load Resume State"));
+	msgbox.setWindowModality(Qt::WindowModal);
 	msgbox.setText(
 		tr("A resume save state was found for this game, saved at:\n\n%1.\n\nDo you want to load this state, or start from a fresh boot?")
 			.arg(fi.lastModified().toLocalTime().toString()));
@@ -2755,7 +2780,8 @@ void MainWindow::populateLoadStateMenu(QMenu* menu, const QString& filename, con
 
 	QAction* action = menu->addAction(is_right_click_menu ? tr("Load State File...") : tr("Load From File..."));
 	connect(action, &QAction::triggered, [this, filename]() {
-		const QString path(QFileDialog::getOpenFileName(this, tr("Select Save State File"), QString(), tr("Save States (*.p2s *.p2s.backup)")));
+		const QString path = QDir::toNativeSeparators(QFileDialog::getOpenFileName(this,
+			tr("Select Save State File"), QString(), tr("Save States (*.p2s *.p2s.backup)")));
 		if (path.isEmpty())
 			return;
 
@@ -2825,7 +2851,8 @@ void MainWindow::populateSaveStateMenu(QMenu* menu, const QString& serial, quint
 		return;
 
 	connect(menu->addAction(tr("Save To File...")), &QAction::triggered, [this]() {
-		const QString path(QFileDialog::getSaveFileName(this, tr("Select Save State File"), QString(), tr("Save States (*.p2s)")));
+		const QString path = QDir::toNativeSeparators(QFileDialog::getSaveFileName(
+			this, tr("Select Save State File"), QString(), tr("Save States (*.p2s)")));
 		if (path.isEmpty())
 			return;
 

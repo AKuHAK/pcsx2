@@ -1,7 +1,8 @@
-// SPDX-FileCopyrightText: 2002-2023 PCSX2 Dev Team
+// SPDX-FileCopyrightText: 2002-2024 PCSX2 Dev Team
 // SPDX-License-Identifier: LGPL-3.0+
 
 #include "LayeredSettingsInterface.h"
+
 #include "common/Assertions.h"
 
 #include <unordered_set>
@@ -10,7 +11,7 @@ LayeredSettingsInterface::LayeredSettingsInterface() = default;
 
 LayeredSettingsInterface::~LayeredSettingsInterface() = default;
 
-bool LayeredSettingsInterface::Save()
+bool LayeredSettingsInterface::Save(Error* error)
 {
 	pxFailRel("Attempting to save layered settings interface");
 	return false;
@@ -19,6 +20,11 @@ bool LayeredSettingsInterface::Save()
 void LayeredSettingsInterface::Clear()
 {
 	pxFailRel("Attempting to clear layered settings interface");
+}
+
+bool LayeredSettingsInterface::IsEmpty()
+{
+	return false;
 }
 
 bool LayeredSettingsInterface::GetIntValue(const char* section, const char* key, int* value) const
@@ -105,6 +111,20 @@ bool LayeredSettingsInterface::GetStringValue(const char* section, const char* k
 	return false;
 }
 
+bool LayeredSettingsInterface::GetStringValue(const char* section, const char* key, SmallStringBase* value) const
+{
+	for (u32 layer = FIRST_LAYER; layer <= LAST_LAYER; layer++)
+	{
+		if (SettingsInterface* sif = m_layers[layer]; sif != nullptr)
+		{
+			if (sif->GetStringValue(section, key, value))
+				return true;
+		}
+	}
+
+	return false;
+}
+
 void LayeredSettingsInterface::SetIntValue(const char* section, const char* key, int value)
 {
 	pxFailRel("Attempt to call SetIntValue() on layered settings interface");
@@ -156,6 +176,16 @@ void LayeredSettingsInterface::DeleteValue(const char* section, const char* key)
 void LayeredSettingsInterface::ClearSection(const char* section)
 {
 	pxFailRel("Attempt to call ClearSection() on layered settings interface");
+}
+
+void LayeredSettingsInterface::RemoveSection(const char* section)
+{
+	pxFailRel("Attempt to call RemoveSection() on layered settings interface");
+}
+
+void LayeredSettingsInterface::RemoveEmptySections()
+{
+	pxFailRel("Attempt to call RemoveEmptySections() on layered settings interface");
 }
 
 std::vector<std::string> LayeredSettingsInterface::GetStringList(const char* section, const char* key) const

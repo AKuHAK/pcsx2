@@ -492,7 +492,7 @@ struct PSMain
 		
 		if (PS_RTA_SRC_CORRECTION)
 		{
-			i = uint4(c * 128.55f); // Denormalize value
+			i = uint4(round(c * 128.25f)); // Denormalize value
 		}
 		else
 		{
@@ -831,7 +831,7 @@ struct PSMain
 		else
 			T = sample_color(st);
 
-		if (SW_BLEND && PS_SHUFFLE && !PS_SHUFFLE_SAME && !PS_READ16_SRC && (PS_SHUFFLE_ACROSS || PS_PROCESS_BA == SHUFFLE_READWRITE || PS_PROCESS_RG == SHUFFLE_READWRITE))
+		if ((SW_BLEND || PS_TFX != 1) && PS_SHUFFLE && !PS_SHUFFLE_SAME && !PS_READ16_SRC && (PS_SHUFFLE_ACROSS || PS_PROCESS_BA == SHUFFLE_READWRITE || PS_PROCESS_RG == SHUFFLE_READWRITE))
 		{
 			uint4 denorm_c_before = uint4(T);
 			if (PS_PROCESS_BA & SHUFFLE_READ)
@@ -936,6 +936,25 @@ struct PSMain
 
 			float Ad = PS_RTA_CORRECTION ? trunc(current_color.a * 128.1f) / 128.f : trunc(current_color.a * 255.1f) / 128.f;
 
+			if (PS_SHUFFLE && NEEDS_RT)
+			{
+				uint4 denorm_rt = uint4(current_color);
+				if (PS_PROCESS_BA & SHUFFLE_WRITE)
+				{
+					current_color.r = float((denorm_rt.b << 3) & 0xF8);
+					current_color.g = float(((denorm_rt.b >> 2) & 0x38) | ((denorm_rt.a << 6) & 0xC0));
+					current_color.b = float((denorm_rt.a << 1) & 0xF8);
+					current_color.a = float(denorm_rt.a & 0x80);
+				}
+				else
+				{
+					current_color.r = float((denorm_rt.r << 3) & 0xF8);
+					current_color.g = float(((denorm_rt.r >> 2) & 0x38) | ((denorm_rt.g << 6) & 0xC0));
+					current_color.b = float((denorm_rt.g << 1) & 0xF8);
+					current_color.a = float(denorm_rt.g & 0x80);
+				}
+			}
+
 			float3 Cd = trunc(current_color.rgb * 255.5f);
 			float3 Cs = Color.rgb;
 
@@ -948,7 +967,7 @@ struct PSMain
 			// We shouldn't clamp blend mix with blend hw 1 as we want alpha higher
 			float C_clamped = C;
 			if (PS_BLEND_MIX > 0 && PS_BLEND_HW != 1 && PS_BLEND_HW != 2)
-				C_clamped = min(C_clamped, 1.f);
+				C_clamped = saturate(C_clamped);
 
 			if (PS_BLEND_A == PS_BLEND_B)
 				Color.rgb = D;
@@ -1000,13 +1019,14 @@ struct PSMain
 		}
 		else
 		{
-			// Needed for Cd * (As/Ad/F + 1) blending mdoes
 			if (PS_BLEND_HW == 1)
 			{
+				// Needed for Cd * (As/Ad/F + 1) blending modes
 				Color.rgb = 255.f;
 			}
 			else if (PS_BLEND_HW == 2)
 			{
+				// Cd*As,Cd*Ad or Cd*F
 				float Alpha = PS_BLEND_C == 2 ? cb.alpha_fix : As;
 				Color.rgb = saturate(Alpha - 1.f) * 255.f;
 			}
@@ -1105,7 +1125,7 @@ struct PSMain
 
 		if (PS_SHUFFLE)
 		{
-			if (SW_BLEND && PS_SHUFFLE && !PS_SHUFFLE_SAME && !PS_READ16_SRC && (PS_SHUFFLE_ACROSS || PS_PROCESS_BA == SHUFFLE_READWRITE || PS_PROCESS_RG == SHUFFLE_READWRITE))
+			if ((SW_BLEND || PS_TFX != 1) && PS_SHUFFLE && !PS_SHUFFLE_SAME && !PS_READ16_SRC && (PS_SHUFFLE_ACROSS || PS_PROCESS_BA == SHUFFLE_READWRITE || PS_PROCESS_RG == SHUFFLE_READWRITE))
 			{
 				uint4 denorm_c_after = uint4(C);
 				if (PS_PROCESS_BA & SHUFFLE_READ)

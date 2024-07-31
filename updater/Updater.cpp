@@ -18,6 +18,8 @@
 #include <vector>
 
 #ifdef _WIN32
+#include "common/RedtapeWilCom.h"
+#include <Shobjidl.h>
 #include <shellapi.h>
 #endif
 
@@ -82,7 +84,7 @@ bool Updater::OpenUpdateZip(const char* path)
 	LookToRead2_Init(&m_look_stream);
 
 #ifdef _WIN32
-	WRes wres = InFile_OpenW(&m_archive_stream.file, StringUtil::UTF8StringToWideString(path).c_str());
+	WRes wres = InFile_OpenW(&m_archive_stream.file, FileSystem::GetWin32Path(path).c_str());
 #else
 	WRes wres = InFile_Open(&m_archive_stream.file, path);
 #endif
@@ -136,16 +138,42 @@ void Updater::CloseUpdateZip()
 bool Updater::RecursiveDeleteDirectory(const char* path)
 {
 #ifdef _WIN32
-	// making this safer on Win32...
-	std::wstring wpath(StringUtil::UTF8StringToWideString(path));
-	wpath += L'\0';
+	wil::com_ptr_nothrow<IFileOperation> fo;
+	HRESULT hr = CoCreateInstance(CLSID_FileOperation, NULL, CLSCTX_ALL, IID_PPV_ARGS(fo.put()));
+	if (FAILED(hr))
+	{
+		m_progress->DisplayFormattedError("CoCreateInstance() for IFileOperation failed: %08X", hr);
+		return false;
+	}
 
-	SHFILEOPSTRUCTW op = {};
-	op.wFunc = FO_DELETE;
-	op.pFrom = wpath.c_str();
-	op.fFlags = FOF_NOCONFIRMATION;
+	wil::com_ptr_nothrow<IShellItem> item;
+	hr = SHCreateItemFromParsingName(StringUtil::UTF8StringToWideString(path).c_str(), NULL, IID_PPV_ARGS(item.put()));
+	if (FAILED(hr))
+	{
+		m_progress->DisplayFormattedError("SHCreateItemFromParsingName() for delete failed: %08X", hr);
+		return false;
+	}
 
-	return (SHFileOperationW(&op) == 0 && !op.fAnyOperationsAborted);
+	hr = fo->SetOperationFlags(FOF_NOCONFIRMATION | FOF_SILENT);
+	if (FAILED(hr))
+		m_progress->DisplayFormattedWarning("IFileOperation::SetOperationFlags() failed: %08X", hr);
+
+	hr = fo->DeleteItem(item.get(), nullptr);
+	if (FAILED(hr))
+	{
+		m_progress->DisplayFormattedError("IFileOperation::DeleteItem() failed: %08X", hr);
+		return false;
+	}
+
+	item.reset();
+	hr = fo->PerformOperations();
+	if (FAILED(hr))
+	{
+		m_progress->DisplayFormattedError("IFileOperation::PerformOperations() failed: %08X", hr);
+		return false;
+	}
+
+	return true;
 #else
 	return FileSystem::RecursiveDeleteDirectory(path);
 #endif
@@ -353,8 +381,8 @@ bool Updater::CommitUpdate()
 		m_progress->DisplayFormattedInformation("Moving '%s' to '%s'", staging_file_name.c_str(), dest_file_name.c_str());
 #ifdef _WIN32
 		const bool result =
-			MoveFileExW(StringUtil::UTF8StringToWideString(staging_file_name).c_str(),
-				StringUtil::UTF8StringToWideString(dest_file_name).c_str(), MOVEFILE_REPLACE_EXISTING);
+			MoveFileExW(FileSystem::GetWin32Path(staging_file_name).c_str(),
+				FileSystem::GetWin32Path(dest_file_name).c_str(), MOVEFILE_REPLACE_EXISTING);
 #else
 		const bool result = (rename(staging_file_name.c_str(), dest_file_name.c_str()) == 0);
 #endif

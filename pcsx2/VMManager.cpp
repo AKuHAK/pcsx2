@@ -6,6 +6,7 @@
 #include "CDVD/IsoReader.h"
 #include "Counters.h"
 #include "DEV9/DEV9.h"
+#include "DebugTools/DebugInterface.h"
 #include "DebugTools/MIPSAnalyst.h"
 #include "DebugTools/SymbolMap.h"
 #include "Elfheader.h"
@@ -132,7 +133,6 @@ namespace VMManager
 	static void SaveSessionTime(const std::string& prev_serial);
 	static void ReloadPINE();
 
-	static LimiterModeType GetInitialLimiterMode();
 	static float GetTargetSpeedForLimiterMode(LimiterModeType mode);
 	static void ResetFrameLimiter();
 	static double AdjustToHostRefreshRate(float frame_rate, float target_speed);
@@ -185,6 +185,7 @@ static LimiterModeType s_limiter_mode = LimiterModeType::Nominal;
 static s64 s_limiter_ticks_per_frame = 0;
 static u64 s_limiter_frame_start = 0;
 static float s_target_speed = 0.0f;
+static bool s_target_speed_synced_to_host = false;
 static bool s_use_vsync_for_timing = false;
 
 // Used to track play time. We use a monotonic timer here, in case of clock changes.
@@ -1320,43 +1321,62 @@ bool VMManager::Initialize(VMBootParameters boot_params)
 		Hle_ClearHostRoot();
 	}
 
-	// Check for resuming with hardcore mode.
+	// Check for resuming and 'Boot and Debug' with hardcore mode.
 	// Why do we need the boot param? Because we need some way of telling BootSystem() that
 	// the user allowed HC mode to be disabled, because otherwise we'll ResetHardcoreMode()
 	// and send ourselves into an infinite loop.
 	if (boot_params.disable_achievements_hardcore_mode)
 		Achievements::DisableHardcoreMode();
 	else
-		Achievements::ResetHardcoreMode();
-	if (!state_to_load.empty() && Achievements::IsHardcoreModeActive())
+		Achievements::ResetHardcoreMode(true);
+	if (Achievements::IsHardcoreModeActive())
 	{
-		if (FullscreenUI::IsInitialized())
+		auto confirmHardcoreModeDisable = [&boot_params, &state_to_load](const char* trigger) mutable {
+			if (FullscreenUI::IsInitialized())
+			{
+				boot_params.elf_override = std::move(s_elf_override);
+				boot_params.save_state = std::move(state_to_load);
+				boot_params.disable_achievements_hardcore_mode = true;
+				s_elf_override = {};
+
+				Achievements::ConfirmHardcoreModeDisableAsync(trigger,
+					[boot_params = std::move(boot_params)](bool approved) mutable {
+						if (approved && Initialize(std::move(boot_params)))
+							SetState(VMState::Running);
+					});
+
+				return false;
+			}
+			else if (!Achievements::ConfirmHardcoreModeDisable(trigger))
+			{
+				return false;
+			}
+			return true;
+		};
+
+		if (!state_to_load.empty())
 		{
-			boot_params.elf_override = std::move(s_elf_override);
-			boot_params.save_state = std::move(state_to_load);
-			boot_params.disable_achievements_hardcore_mode = true;
-			s_elf_override = {};
-
-			Achievements::ConfirmHardcoreModeDisableAsync(TRANSLATE("VMManager", "Resuming state"),
-				[boot_params = std::move(boot_params)](bool approved) mutable {
-					if (approved && Initialize(std::move(boot_params)))
-						SetState(VMState::Running);
-				});
-
-			return false;
+			if (!confirmHardcoreModeDisable(TRANSLATE("VMManager", "Resuming state")))
+			{
+				return false;
+			}
 		}
-		else if (!Achievements::ConfirmHardcoreModeDisable(TRANSLATE("VMManager", "Resuming state")))
+		if (DebugInterface::getPauseOnEntry())
 		{
-			return false;
+			if (!confirmHardcoreModeDisable(TRANSLATE("VMManager", "Boot and Debug")))
+			{
+				return false;
+			}
 		}
 	}
 
-	s_limiter_mode = GetInitialLimiterMode();
+	s_limiter_mode = LimiterModeType::Nominal;
 	s_target_speed = GetTargetSpeedForLimiterMode(s_limiter_mode);
 	s_use_vsync_for_timing = false;
 
 	s_cpu_implementation_changed = false;
 	UpdateCPUImplementations();
+	memSetExtraMemMode(EmuConfig.Cpu.ExtraMemory);
 	Internal::ClearCPUExecutionCaches();
 	FPControlRegister::SetCurrent(EmuConfig.Cpu.FPUFPCR);
 	memBindConditionalHandlers();
@@ -1585,7 +1605,7 @@ void VMManager::Reset()
 		return;
 
 	// Re-enforce hardcode mode constraints if we're now enabling it.
-	if (Achievements::ResetHardcoreMode())
+	if (Achievements::ResetHardcoreMode(false))
 		ApplySettings();
 
 	vu1Thread.WaitVU();
@@ -1597,6 +1617,7 @@ void VMManager::Reset()
 	if (elf_was_changed)
 		HandleELFChange(false);
 
+	memSetExtraMemMode(EmuConfig.Cpu.ExtraMemory);
 	Internal::ClearCPUExecutionCaches();
 	memBindConditionalHandlers();
 	SysMemory::Reset();
@@ -1702,7 +1723,7 @@ bool VMManager::DoLoadState(const char* filename)
 	Error error;
 	if (!SaveState_UnzipFromDisk(filename, &error))
 	{
-		Host::ReportErrorAsync("Failed to load save state", error.GetDescription());
+		Host::ReportErrorAsync(TRANSLATE_SV("VMManager","Failed to load save state"), error.GetDescription());
 		return false;
 	}
 
@@ -1960,16 +1981,11 @@ float VMManager::GetTargetSpeed()
 	return s_target_speed;
 }
 
-LimiterModeType VMManager::GetInitialLimiterMode()
-{
-	return EmuConfig.EmulationSpeed.FrameLimitEnable ? LimiterModeType::Nominal : LimiterModeType::Unlimited;
-}
-
 double VMManager::AdjustToHostRefreshRate(float frame_rate, float target_speed)
 {
 	if (!EmuConfig.EmulationSpeed.SyncToHostRefreshRate || target_speed != 1.0f)
 	{
-		SPU2::SetDeviceSampleRateMultiplier(1.0);
+		s_target_speed_synced_to_host = false;
 		s_use_vsync_for_timing = false;
 		return target_speed;
 	}
@@ -1978,48 +1994,43 @@ double VMManager::AdjustToHostRefreshRate(float frame_rate, float target_speed)
 	if (!GSGetHostRefreshRate(&host_refresh_rate))
 	{
 		Console.Warning("Cannot sync to host refresh since the query failed.");
-		SPU2::SetDeviceSampleRateMultiplier(1.0);
+		s_target_speed_synced_to_host = false;
 		s_use_vsync_for_timing = false;
 		return target_speed;
 	}
 
-	const double ratio = host_refresh_rate / frame_rate;
+	const float ratio = host_refresh_rate / frame_rate;
 	const bool syncing_to_host = (ratio >= 0.95f && ratio <= 1.05f);
+	s_target_speed_synced_to_host = syncing_to_host;
 	s_use_vsync_for_timing = (syncing_to_host && !EmuConfig.GS.SkipDuplicateFrames && EmuConfig.GS.VsyncEnable != VsyncMode::Off);
 	Console.WriteLn("Refresh rate: Host=%fhz Guest=%fhz Ratio=%f - %s %s", host_refresh_rate, frame_rate, ratio,
 		syncing_to_host ? "can sync" : "can't sync", s_use_vsync_for_timing ? "and using vsync for pacing" : "and using sleep for pacing");
 
-	if (!syncing_to_host)
-		return target_speed;
-
-	target_speed *= ratio;
-	SPU2::SetDeviceSampleRateMultiplier(ratio);
-	return target_speed;
+	return syncing_to_host ? ratio : target_speed;
 }
 
 float VMManager::GetTargetSpeedForLimiterMode(LimiterModeType mode)
 {
-	if (EmuConfig.EmulationSpeed.FrameLimitEnable && (!EmuConfig.EnableFastBootFastForward || !VMManager::Internal::IsFastBootInProgress()))
+	if (EmuConfig.EnableFastBootFastForward && VMManager::Internal::IsFastBootInProgress())
+		return 0.0f;
+
+	switch (s_limiter_mode)
 	{
-		switch (s_limiter_mode)
-		{
-			case LimiterModeType::Nominal:
-				return EmuConfig.EmulationSpeed.NominalScalar;
+		case LimiterModeType::Nominal:
+			return EmuConfig.EmulationSpeed.NominalScalar;
 
-			case LimiterModeType::Slomo:
-				return EmuConfig.EmulationSpeed.SlomoScalar;
+		case LimiterModeType::Slomo:
+			return EmuConfig.EmulationSpeed.SlomoScalar;
 
-			case LimiterModeType::Turbo:
-				return EmuConfig.EmulationSpeed.TurboScalar;
+		case LimiterModeType::Turbo:
+			return EmuConfig.EmulationSpeed.TurboScalar;
 
-			case LimiterModeType::Unlimited:
-				return 0.0f;
+		case LimiterModeType::Unlimited:
+			return 0.0f;
 
-				jNO_DEFAULT
-		}
+		default:
+			ASSUME(false);
 	}
-
-	return 0.0f;
 }
 
 void VMManager::UpdateTargetSpeed()
@@ -2042,6 +2053,11 @@ void VMManager::UpdateTargetSpeed()
 		SPU2::OnTargetSpeedChanged();
 		ResetFrameLimiter();
 	}
+}
+
+bool VMManager::IsTargetSpeedAdjustedToHost()
+{
+	return s_target_speed_synced_to_host;
 }
 
 float VMManager::GetFrameRate()
@@ -2602,7 +2618,7 @@ void VMManager::Internal::EntryPointCompilingOnCPUThread()
 	const bool reset_speed_limiter = (EmuConfig.EnableFastBootFastForward && IsFastBootInProgress());
 
 	Console.WriteLn(
-		Color_StrongGreen, fmt::format("ELF {} with entry point at 0x{} is executing.", s_elf_path, s_elf_entry_point));
+		Color_StrongGreen, fmt::format("ELF {} with entry point at 0x{:08X} is executing.", s_elf_path, s_elf_entry_point));
 	s_elf_executed = true;
 
 	if (reset_speed_limiter)
@@ -2909,9 +2925,6 @@ void VMManager::EnforceAchievementsChallengeModeSettings()
 	EmuConfig.Speedhacks.EECycleRate =
 		std::max<decltype(EmuConfig.Speedhacks.EECycleRate)>(EmuConfig.Speedhacks.EECycleRate, 0);
 	EmuConfig.Speedhacks.EECycleSkip = 0;
-
-	// Async mix breaks games.
-	EmuConfig.SPU2.SynchMode = Pcsx2Config::SPU2Options::SynchronizationMode::TimeStretch;
 }
 
 void VMManager::LogUnsafeSettingsToConsole(const std::string& messages)
@@ -2953,11 +2966,6 @@ void VMManager::WarnAboutUnsafeSettings()
 	{
 		append(ICON_FA_TACHOMETER_ALT,
 			TRANSLATE_SV("VMManager", "Cycle rate/skip is not at default, this may crash or make games run too slow."));
-	}
-	if (EmuConfig.SPU2.SynchMode == Pcsx2Config::SPU2Options::SynchronizationMode::ASync)
-	{
-		append(ICON_FA_VOLUME_MUTE,
-			TRANSLATE_SV("VMManager", "Audio is using async mix, expect desynchronization in FMVs."));
 	}
 	if (EmuConfig.GS.UpscaleMultiplier < 1.0f)
 		append(ICON_FA_TV, TRANSLATE_SV("VMManager", "Upscale multiplier is below native, this will break rendering."));
@@ -3016,6 +3024,11 @@ void VMManager::WarnAboutUnsafeSettings()
 	{
 		append(ICON_PF_MICROCHIP,
 			TRANSLATE_SV("VMManager", "VU Clamp Mode is not set to default, this may break some games."));
+	}
+	if (EmuConfig.Cpu.ExtraMemory)
+	{
+		append(ICON_PF_MICROCHIP,
+			TRANSLATE_SV("VMManager", "128MB RAM is enabled. Compatibility with some games may be affected."));
 	}
 	if (!EmuConfig.EnableGameFixes)
 	{
@@ -3106,6 +3119,11 @@ void VMManager::WarnAboutUnsafeSettings()
 	{
 		append(ICON_FA_EXCLAMATION_CIRCLE,
 			TRANSLATE_SV("VMManager", "Estimate texture region is enabled, this may reduce performance."));
+	}
+	if (EmuConfig.GS.DumpReplaceableTextures)
+	{
+		append(ICON_FA_EXCLAMATION_CIRCLE,
+			TRANSLATE_SV("VMManager", "Texture dumping is enabled, this will continually dump textures to disk."));
 	}
 
 	if (!messages.empty())

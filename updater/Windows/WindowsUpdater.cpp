@@ -6,6 +6,7 @@
 
 #include "common/FileSystem.h"
 #include "common/Console.h"
+#include "common/ScopedGuard.h"
 #include "common/StringUtil.h"
 #include "common/ProgressCallback.h"
 #include "common/RedtapeWindows.h"
@@ -420,6 +421,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
 {
 	Win32ProgressCallback progress;
 
+	const bool com_initialized = SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED));
+	const ScopedGuard com_guard = [com_initialized]() {
+		if (com_initialized)
+			CoUninitialize();
+	};
+
 	int argc = 0;
 	wil::unique_hlocal_ptr<LPWSTR[]> argv(CommandLineToArgvW(GetCommandLineW(), &argc));
 	if (!argv || argc <= 0)
@@ -481,7 +488,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
 	if (!updater.CommitUpdate())
 	{
 		progress.ModalError(
-			"Failed to commit update. Your installation may be corrupted, please re-download a fresh version from GitHub.");
+			"Failed to commit update. Your installation may be corrupted, please re-download a fresh version from pcsx2.net.");
 		return 1;
 	}
 
@@ -493,8 +500,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
 	{
 		const std::string full_path = destination_directory + FS_OSPATH_SEPARATOR_STR + actual_exe;
 		progress.DisplayFormattedInformation("Moving '%s' to '%S'", full_path.c_str(), program_to_launch.c_str());
-		const bool ok = MoveFileExW(StringUtil::UTF8StringToWideString(full_path).c_str(),
-			program_to_launch.c_str(), MOVEFILE_REPLACE_EXISTING);
+		const bool ok = MoveFileExW(FileSystem::GetWin32Path(full_path).c_str(),
+			FileSystem::GetWin32Path(StringUtil::WideStringToUTF8String(program_to_launch)).c_str(),
+			MOVEFILE_REPLACE_EXISTING);
 		if (!ok)
 		{
 			progress.DisplayFormattedModalError("Failed to rename '%s' to %S", full_path.c_str(), program_to_launch.c_str());

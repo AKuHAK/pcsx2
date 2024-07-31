@@ -19,12 +19,12 @@ class DEV9SettingsWidget : public QWidget
 	Q_OBJECT
 
 private Q_SLOTS:
-	void onEthEnabledChanged(int state);
+	void onEthEnabledChanged(Qt::CheckState state);
 	void onEthDeviceTypeChanged(int index);
 	void onEthDeviceChanged(int index);
-	void onEthDHCPInterceptChanged(int state);
+	void onEthDHCPInterceptChanged(Qt::CheckState state);
 	void onEthIPChanged(QLineEdit* sender, const char* section, const char* key);
-	void onEthAutoChanged(QCheckBox* sender, int state, QLineEdit* input, const char* section, const char* key);
+	void onEthAutoChanged(QCheckBox* sender, Qt::CheckState state, QLineEdit* input, const char* section, const char* key);
 	void onEthDNSModeChanged(QComboBox* sender, int index, QLineEdit* input, const char* section, const char* key);
 	void onEthHostAdd();
 	void onEthHostDel();
@@ -33,13 +33,13 @@ private Q_SLOTS:
 	void onEthHostPerGame();
 	void onEthHostEdit(QStandardItem* item);
 
-	void onHddEnabledChanged(int state);
+	void onHddEnabledChanged(Qt::CheckState state);
 	void onHddBrowseFileClicked();
 	void onHddFileTextChange();
 	void onHddFileEdit();
 	void onHddSizeSlide(int i);
 	void onHddSizeAccessorSpin();
-	void onHddLBA48Changed(int state);
+	void onHddLBA48Changed(Qt::CheckState state);
 	void onHddCreateClicked();
 
 public:
@@ -52,6 +52,7 @@ protected:
 
 private:
 	void AddAdapter(const AdapterEntry& adapter);
+	void LoadAdapters();
 	void RefreshHostList();
 	int CountHostsConfig();
 	std::optional<std::vector<HostEntryUi>> ListHostsConfig();
@@ -66,9 +67,12 @@ private:
 
 	Ui::DEV9SettingsWidget m_ui;
 
+	bool m_firstShow{true};
+
 	QStandardItemModel* m_ethHost_model;
 	QSortFilterProxyModel* m_ethHosts_proxy;
 
+	bool m_adaptersLoaded{false};
 	std::vector<Pcsx2Config::DEV9Options::NetApi> m_api_list;
 	std::vector<const char*> m_api_namelist;
 	std::vector<const char*> m_api_valuelist;

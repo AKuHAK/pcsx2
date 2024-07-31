@@ -132,10 +132,10 @@ struct ConsoleLogWriter
 	} while (0)
 
 	// clang-format off
-	__fi static void Error(const char* format, ...) { MAKE_PRINTF_CONSOLE_WRITER(Color_StrongRed); }
-	__fi static void Warning(const char* format, ...) { MAKE_PRINTF_CONSOLE_WRITER(Color_StrongOrange); }
-	__fi static void WriteLn(const char* format, ...) { MAKE_PRINTF_CONSOLE_WRITER(Color_Default); }
-	__fi static void WriteLn(ConsoleColors color, const char* format, ...) { MAKE_PRINTF_CONSOLE_WRITER(color); }
+	static void Error(const char* format, ...) { MAKE_PRINTF_CONSOLE_WRITER(Color_StrongRed); }
+	static void Warning(const char* format, ...) { MAKE_PRINTF_CONSOLE_WRITER(Color_StrongOrange); }
+	static void WriteLn(const char* format, ...) { MAKE_PRINTF_CONSOLE_WRITER(Color_Default); }
+	static void WriteLn(ConsoleColors color, const char* format, ...) { MAKE_PRINTF_CONSOLE_WRITER(color); }
 	// clang-format on	
 
 #undef MAKE_PRINTF_CONSOLE_WRITER
@@ -181,10 +181,19 @@ struct NullLogWriter
 extern ConsoleLogWriter<LOGLEVEL_INFO> Console;
 extern ConsoleLogWriter<LOGLEVEL_DEV> DevCon;
 
+#define ERROR_LOG(...) Log::Write(LOGLEVEL_ERROR, Color_StrongRed, __VA_ARGS__)
+#define WARNING_LOG(...) Log::Write(LOGLEVEL_WARNING, Color_StrongOrange, __VA_ARGS__)
+#define INFO_LOG(...) Log::Write(LOGLEVEL_INFO, Color_White, __VA_ARGS__)
+#define DEV_LOG(...) Log::Write(LOGLEVEL_DEV, Color_StrongGray, __VA_ARGS__)
+
 #ifdef _DEBUG
 extern ConsoleLogWriter<LOGLEVEL_DEBUG> DbgConWriter;
 #define DbgCon DbgConWriter
+#define DEBUG_LOG(...) Log::Write(LOGLEVEL_TRACE, Color_Gray, __VA_ARGS__)
+#define TRACE_LOG(...) Log::Write(LOGLEVEL_TRACE, Color_Blue, __VA_ARGS__)
 #else
 extern NullLogWriter DbgConWriter;
 #define DbgCon 0 && DbgConWriter
+#define DEBUG_LOG(...) (void)0
+#define TRACE_LOG(...) (void)0
 #endif

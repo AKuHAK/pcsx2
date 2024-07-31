@@ -116,6 +116,7 @@ public:
 		u32 refcount;
 		u16 age;
 		std::pair<u8, u8> alpha_minmax;
+		bool valid_alpha_minmax;
 		bool is_replacement;
 	};
 
@@ -176,6 +177,7 @@ public:
 		~Palette();
 
 		__fi std::pair<u8, u8> GetAlphaMinMax() const { return m_alpha_minmax; }
+		std::pair<u8, u8> GetAlphaMinMax(u8 min_index, u8 max_index) const;
 
 		// Disable copy constructor and copy operator
 		Palette(const Palette&) = delete;
@@ -242,8 +244,8 @@ public:
 		void ResizeValidity(const GSVector4i& rect);
 		void UpdateValidity(const GSVector4i& rect, bool can_resize = true);
 
-		void RTACorrect(Target* rt);
-		void RTADecorrect(Target* rt);
+		void ScaleRTAlpha();
+		void UnscaleRTAlpha();
 
 		void Update(bool cannot_scale = false);
 
@@ -286,6 +288,7 @@ public:
 		bool m_target = false;
 		bool m_target_direct = false;
 		bool m_repeating = false;
+		bool m_valid_alpha_minmax = false;
 		std::pair<u8, u8> m_alpha_minmax = {0u, 255u};
 		std::vector<GSVector2i>* m_p2t = nullptr;
 		// Keep a trace of the target origin. There is no guarantee that pointer will
@@ -496,10 +499,12 @@ public:
 	/// Looks up a target in the cache, and only returns it if the BP/BW match exactly.
 	Target* GetExactTarget(u32 BP, u32 BW, int type, u32 end_bp);
 	Target* GetTargetWithSharedBits(u32 BP, u32 PSM) const;
+	Target* FindOverlappingTarget(GSTextureCache::Target* target) const;
 	Target* FindOverlappingTarget(u32 BP, u32 end_bp) const;
 	Target* FindOverlappingTarget(u32 BP, u32 BW, u32 PSM, GSVector4i rc) const;
 
 	GSVector2i GetTargetSize(u32 bp, u32 fbw, u32 psm, s32 min_width, s32 min_height);
+	bool HasTargetInHeightCache(u32 bp, u32 fbw, u32 psm, u32 max_age = std::numeric_limits<u32>::max(), bool move_front = true);
 	bool Has32BitTarget(u32 bp);
 
 	void InvalidateContainedTargets(u32 start_bp, u32 end_bp, u32 write_psm = PSMCT32);
@@ -537,7 +542,7 @@ public:
 		return (type == DepthStencil) ? "Depth" : "Color";
 	}
 
-	void AttachPaletteToSource(Source* s, u16 pal, bool need_gs_texture);
+	void AttachPaletteToSource(Source* s, u16 pal, bool need_gs_texture, bool update_alpha_minmax);
 	void AttachPaletteToSource(Source* s, GSTexture* gpu_clut);
 	SurfaceOffset ComputeSurfaceOffset(const GSOffset& off, const GSVector4i& r, const Target* t);
 	SurfaceOffset ComputeSurfaceOffset(const uint32_t bp, const uint32_t bw, const uint32_t psm, const GSVector4i& r, const Target* t);

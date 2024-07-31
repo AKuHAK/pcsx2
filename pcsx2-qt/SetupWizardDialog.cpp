@@ -1,10 +1,11 @@
-// SPDX-FileCopyrightText: 2002-2023 PCSX2 Dev Team
+// SPDX-FileCopyrightText: 2002-2024 PCSX2 Dev Team
 // SPDX-License-Identifier: LGPL-3.0+
 
 #include "pcsx2/SIO/Pad/Pad.h"
 #include "QtHost.h"
 #include "QtUtils.h"
 #include "SettingWidgetBinder.h"
+#include "Settings/BIOSSettingsWidget.h"
 #include "Settings/ControllerSettingWidgetBinder.h"
 #include "Settings/InterfaceSettingsWidget.h"
 #include "SetupWizardDialog.h"
@@ -18,14 +19,7 @@ SetupWizardDialog::SetupWizardDialog()
 	updatePageButtons();
 }
 
-SetupWizardDialog::~SetupWizardDialog()
-{
-	if (m_bios_refresh_thread)
-	{
-		m_bios_refresh_thread->wait();
-		delete m_bios_refresh_thread;
-	}
-}
+SetupWizardDialog::~SetupWizardDialog() = default;
 
 void SetupWizardDialog::resizeEvent(QResizeEvent* event)
 {
@@ -222,18 +216,7 @@ void SetupWizardDialog::setupBIOSPage()
 
 void SetupWizardDialog::refreshBiosList()
 {
-	if (m_bios_refresh_thread)
-	{
-		m_bios_refresh_thread->wait();
-		delete m_bios_refresh_thread;
-	}
-
-	QSignalBlocker blocker(m_ui.biosList);
-	m_ui.biosList->clear();
-	m_ui.biosList->setEnabled(false);
-
-	m_bios_refresh_thread = new BIOSSettingsWidget::RefreshThread(this, m_ui.biosSearchDirectory->text());
-	m_bios_refresh_thread->start();
+	BIOSSettingsWidget::populateList(m_ui.biosList, m_ui.biosSearchDirectory->text().toStdString());
 }
 
 void SetupWizardDialog::biosListItemChanged(const QTreeWidgetItem* current, const QTreeWidgetItem* previous)
@@ -241,13 +224,6 @@ void SetupWizardDialog::biosListItemChanged(const QTreeWidgetItem* current, cons
 	Host::SetBaseStringSettingValue("Filenames", "BIOS", current->text(0).toUtf8().constData());
 	Host::CommitBaseSettingChanges();
 	g_emu_thread->applySettings();
-}
-
-void SetupWizardDialog::listRefreshed(const QVector<BIOSInfo>& items)
-{
-	QSignalBlocker sb(m_ui.biosList);
-	BIOSSettingsWidget::populateList(m_ui.biosList, items);
-	m_ui.biosList->setEnabled(true);
 }
 
 void SetupWizardDialog::setupGameListPage()
@@ -261,12 +237,10 @@ void SetupWizardDialog::setupGameListPage()
 	m_ui.searchDirectoryList->setCurrentIndex({});
 	m_ui.searchDirectoryList->setContextMenuPolicy(Qt::ContextMenuPolicy::CustomContextMenu);
 
-	connect(m_ui.searchDirectoryList, &QTableWidget::customContextMenuRequested, this,
-		&SetupWizardDialog::onDirectoryListContextMenuRequested);
-	connect(m_ui.addSearchDirectoryButton, &QPushButton::clicked, this,
-		&SetupWizardDialog::onAddSearchDirectoryButtonClicked);
-	connect(m_ui.removeSearchDirectoryButton, &QPushButton::clicked, this,
-		&SetupWizardDialog::onRemoveSearchDirectoryButtonClicked);
+	connect(m_ui.searchDirectoryList, &QTableWidget::customContextMenuRequested, this, &SetupWizardDialog::onDirectoryListContextMenuRequested);
+	connect(m_ui.searchDirectoryList, &QTableWidget::itemSelectionChanged, this, &SetupWizardDialog::onDirectoryListSelectionChanged);
+	connect(m_ui.addSearchDirectoryButton, &QPushButton::clicked, this, &SetupWizardDialog::onAddSearchDirectoryButtonClicked);
+	connect(m_ui.removeSearchDirectoryButton, &QPushButton::clicked, this, &SetupWizardDialog::onRemoveSearchDirectoryButtonClicked);
 
 	refreshDirectoryList();
 }
@@ -285,6 +259,11 @@ void SetupWizardDialog::onDirectoryListContextMenuRequested(const QPoint& point)
 	menu.addAction(tr("Open Directory..."),
 		[this, row]() { QtUtils::OpenURL(this, QUrl::fromLocalFile(m_ui.searchDirectoryList->item(row, 0)->text())); });
 	menu.exec(m_ui.searchDirectoryList->mapToGlobal(point));
+}
+
+void SetupWizardDialog::onDirectoryListSelectionChanged()
+{
+	m_ui.removeSearchDirectoryButton->setEnabled(!m_ui.searchDirectoryList->selectedItems().isEmpty());
 }
 
 void SetupWizardDialog::onAddSearchDirectoryButtonClicked()
@@ -342,7 +321,7 @@ void SetupWizardDialog::addPathToTable(const std::string& path, bool recursive)
 	m_ui.searchDirectoryList->setCellWidget(row, 1, cb);
 	cb->setChecked(recursive);
 
-	connect(cb, &QCheckBox::stateChanged, [item](int state) {
+	connect(cb, &QCheckBox::checkStateChanged, this, [item](Qt::CheckState state) {
 		const std::string path(item->text().toStdString());
 		if (state == Qt::Checked)
 		{
@@ -373,6 +352,7 @@ void SetupWizardDialog::refreshDirectoryList()
 		addPathToTable(entry, true);
 
 	m_ui.searchDirectoryList->sortByColumn(0, Qt::AscendingOrder);
+	m_ui.removeSearchDirectoryButton->setEnabled(false);
 }
 
 void SetupWizardDialog::resizeDirectoryListColumns()
