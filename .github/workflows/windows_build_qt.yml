@@ -55,7 +55,7 @@ jobs:
       POWERSHELL_TELEMETRY_OPTOUT: 1
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout Repository and Submodules
         uses: actions/checkout@v4
         with:
           submodules: recursive
