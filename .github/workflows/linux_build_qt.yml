@@ -55,21 +55,13 @@ jobs:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_COMPRESS: true
       CCACHE_COMPRESSLEVEL: 9
-      CCACHE_MAXSIZE: 100M
+      CCACHE_MAXSIZE: 500M
 
     steps:
-      # Work around https://github.com/actions/runner-images/issues/8659
-      - name: Remove GCC 13 from runner image
-        shell: bash
-        run: |
-          sudo rm -f /etc/apt/sources.list.d/ubuntu-toolchain-r-ubuntu-test-jammy.list
-          sudo apt-get update
-          sudo apt-get install -y --allow-downgrades 'libc6=2.35-0ubuntu*' 'libc6-dev=2.35-0ubuntu*' libstdc++6=12.3.0-1ubuntu1~22.04 libgcc-s1=12.3.0-1ubuntu1~22.04
-
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+           fetch-depth: 0
 
       # actions/checkout elides tags, fetch them primarily for releases
       - name: Fetch Tags
@@ -125,7 +117,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/deps
-          key: ${{ inputs.os }} ${{ inputs.platform }} deps ${{ hashFiles('.github/workflows/scripts/linux/build-dependencies-qt.sh') }}
+          key: ${{ inputs.os }} ${{ inputs.platform }} deps ${{ hashFiles('.github/workflows/scripts/linux/build-dependencies-qt.sh', '.github/workflows/scripts/common/*.patch') }}
 
       - name: Build Dependencies
         if: steps.cache-deps.outputs.cache-hit != 'true'
@@ -148,9 +140,11 @@ jobs:
             -DCMAKE_CXX_COMPILER=clang++-17 \
             -DCMAKE_EXE_LINKER_FLAGS_INIT="-fuse-ld=lld" \
             -DCMAKE_MODULE_LINKER_FLAGS_INIT="-fuse-ld=lld" \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DENABLE_SETCAP=OFF \
             -DDISABLE_ADVANCE_SIMD=TRUE \
+            -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON \
             $ADDITIONAL_CMAKE_ARGS
 
       - name: Build PCSX2

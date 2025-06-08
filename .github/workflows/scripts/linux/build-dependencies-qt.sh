@@ -15,48 +15,54 @@ if [ "${INSTALLDIR:0:1}" != "/" ]; then
 fi
 
 LIBBACKTRACE=ad106d5fdd5d960bd33fae1c48a351af567fd075
-LIBJPEG=9f
-LIBPNG=1.6.43
-LIBWEBP=1.3.2
-LZ4=b8fd2d15309dd4e605070bd4486e26b6ef814e29
-SDL=SDL2-2.30.3
-QT=6.7.0
-ZSTD=1.5.5
+LIBJPEGTURBO=3.1.0
+LIBPNG=1.6.48
+LIBWEBP=1.5.0
+SDL=SDL3-3.2.14
+QT=6.9.0
+LZ4=1.10.0
+ZSTD=1.5.7
+KDDOCKWIDGETS=2.2.3
+PLUTOVG=0.0.13
+PLUTOSVG=0.0.6
 
-SHADERC=2024.0
-SHADERC_GLSLANG=d73712b8f6c9047b09e99614e20d456d5ada2390
-SHADERC_SPIRVHEADERS=8b246ff75c6615ba4532fe4fde20f1be090c3764
-SHADERC_SPIRVTOOLS=04896c462d9f3f504c99a4698605b6524af813c1
+SHADERC=2024.1
+SHADERC_GLSLANG=142052fa30f9eca191aa9dcf65359fcaed09eeec
+SHADERC_SPIRVHEADERS=5e3ad389ee56fca27c9705d093ae5387ce404df4
+SHADERC_SPIRVTOOLS=dd4b663e13c07fea4fbb3f70c1c91c86731099f7
 
 mkdir -p deps-build
 cd deps-build
 
 cat > SHASUMS <<EOF
 fd6f417fe9e3a071cf1424a5152d926a34c4a3c5070745470be6cf12a404ed79  $LIBBACKTRACE.zip
-04705c110cb2469caa79fb71fba3d7bf834914706e9641a4589485c1f832565b  jpegsrc.v$LIBJPEG.tar.gz
-6a5ca0652392a2d7c9db2ae5b40210843c0bbc081cbd410825ab00cc59f14a6c  libpng-$LIBPNG.tar.xz
-2a499607df669e40258e53d0ade8035ba4ec0175244869d1025d460562aa09b4  libwebp-$LIBWEBP.tar.gz
-0728800155f3ed0a0c87e03addbd30ecbe374f7b080678bbca1506051d50dec3  $LZ4.tar.gz
-820440072f8f5b50188c1dae104f2ad25984de268785be40c41a099a510f0aec  $SDL.tar.gz
-9c4396cc829cfae319a6e2615202e82aad41372073482fce286fac78646d3ee4  zstd-$ZSTD.tar.gz
-11b2e29e2e52fb0e3b453ea13bbe51a10fdff36e1c192d8868c5a40233b8b254  qtbase-everywhere-src-$QT.tar.xz
-516ce07ec8dd5a11c59816fe33ddb71d4f691d0ebbc1798ac338f23b86c029a7  qtimageformats-everywhere-src-$QT.tar.xz
-1518f40e08ff5e6153a6e26e5b95b033413ac143b70795dc1317e7f73ebf922d  qtsvg-everywhere-src-$QT.tar.xz
-c8da6b239e82fe1e23465cbf0936c0da5a334438d3fb433e19c503cbb1abee7b  qttools-everywhere-src-$QT.tar.xz
-26fc8047062ca4bacd1bd953be86fd39c6e0a5f5e9920c72ba9d40876cea4b56  qttranslations-everywhere-src-$QT.tar.xz
-d73470e4217da388d8cd2a517ee8bb373853f33c569306e80f04397845157aea  qtwayland-everywhere-src-$QT.tar.xz
-c761044e4e204be8e0b9a2d7494f08671ca35b92c4c791c7049594ca7514197f  shaderc-$SHADERC.tar.gz
-d27f7359156a92749f8fd4681d1d518c736864213c431cf8144ecc2fb6689a2d  shaderc-glslang-$SHADERC_GLSLANG.tar.gz
-cfeed5f9a97d12a9761a26e7f5bd10fedb1a8ce92033075151ae3bc7206fc229  shaderc-spirv-headers-$SHADERC_SPIRVHEADERS.tar.gz
-c0d01e758a543b3a358cb97af02c6817ebd3f5ff13a2edf9fb220646a3d67999  shaderc-spirv-tools-$SHADERC_SPIRVTOOLS.tar.gz
+9564c72b1dfd1d6fe6274c5f95a8d989b59854575d4bbee44ade7bc17aa9bc93  libjpeg-turbo-$LIBJPEGTURBO.tar.gz
+46fd06ff37db1db64c0dc288d78a3f5efd23ad9ac41561193f983e20937ece03  libpng-$LIBPNG.tar.xz
+7d6fab70cf844bf6769077bd5d7a74893f8ffd4dfb42861745750c63c2a5c92c  libwebp-$LIBWEBP.tar.gz
+b7e7dc05011b88c69170fe18935487b2559276955e49113f8c1b6b72c9b79c1f  $SDL.tar.gz
+537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b  lz4-$LZ4.tar.gz
+eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3  zstd-$ZSTD.tar.gz
+c1800c2ea835801af04a05d4a32321d79a93954ee3ae2172bbeacf13d1f0598c  qtbase-everywhere-src-$QT.tar.xz
+2047c6242a57bf97cf40079fa9f91752c137cd9ae84760faa9a2e5e8a440606f  qtimageformats-everywhere-src-$QT.tar.xz
+ec359d930c95935ea48af58b100c2f5d0d275968ec8ca1e0e76629b7159215fc  qtsvg-everywhere-src-$QT.tar.xz
+fa645589cc3f939022401a926825972a44277dead8ec8607d9f2662e6529c9a4  qttools-everywhere-src-$QT.tar.xz
+1d5581ef5fc7c7bc556f2403017983683993bbebfcdf977ef8f180f604668c3f  qttranslations-everywhere-src-$QT.tar.xz
+503416fcb04db503bd130e6a49c45e3e546f091e83406f774a0c703130c91805  qtwayland-everywhere-src-$QT.tar.xz
+eb3b5f0c16313d34f208d90c2fa1e588a23283eed63b101edd5422be6165d528  shaderc-$SHADERC.tar.gz
+aa27e4454ce631c5a17924ce0624eac736da19fc6f5a2ab15a6c58da7b36950f  shaderc-glslang-$SHADERC_GLSLANG.tar.gz
+5d866ce34a4b6908e262e5ebfffc0a5e11dd411640b5f24c85a80ad44c0d4697  shaderc-spirv-headers-$SHADERC_SPIRVHEADERS.tar.gz
+03ee1a2c06f3b61008478f4abe9423454e53e580b9488b47c8071547c6a9db47  shaderc-spirv-tools-$SHADERC_SPIRVTOOLS.tar.gz
+b8529755b2d54205341766ae168e83177c6120660539f9afba71af6bca4b81ec  KDDockWidgets-$KDDOCKWIDGETS.tar.gz
+f49d62709d6bf1808ddc9b8f71e22a755484f75c7bbb0fb368f7fb2ffc7cf645  plutovg-$PLUTOVG.tar.gz
+01f8aee511bd587a602a166642a96522cc9522efd1e38c2d00e4fbc0aa22d7a0  plutosvg-$PLUTOSVG.tar.gz
 EOF
 
-curl -C - -L \
+curl -L \
 	-O "https://github.com/ianlancetaylor/libbacktrace/archive/$LIBBACKTRACE.zip" \
-	-O "https://ijg.org/files/jpegsrc.v$LIBJPEG.tar.gz" \
+	-O "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/$LIBJPEGTURBO/libjpeg-turbo-$LIBJPEGTURBO.tar.gz" \
 	-O "https://downloads.sourceforge.net/project/libpng/libpng16/$LIBPNG/libpng-$LIBPNG.tar.xz" \
 	-O "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-$LIBWEBP.tar.gz" \
-	-O "https://github.com/lz4/lz4/archive/$LZ4.tar.gz" \
+	-O "https://github.com/lz4/lz4/releases/download/v$LZ4/lz4-$LZ4.tar.gz" \
 	-O "https://libsdl.org/release/$SDL.tar.gz" \
 	-O "https://github.com/facebook/zstd/releases/download/v$ZSTD/zstd-$ZSTD.tar.gz" \
 	-O "https://download.qt.io/official_releases/qt/${QT%.*}/$QT/submodules/qtbase-everywhere-src-$QT.tar.xz" \
@@ -68,7 +74,10 @@ curl -C - -L \
 	-o "shaderc-$SHADERC.tar.gz" "https://github.com/google/shaderc/archive/refs/tags/v$SHADERC.tar.gz" \
 	-o "shaderc-glslang-$SHADERC_GLSLANG.tar.gz" "https://github.com/KhronosGroup/glslang/archive/$SHADERC_GLSLANG.tar.gz" \
 	-o "shaderc-spirv-headers-$SHADERC_SPIRVHEADERS.tar.gz" "https://github.com/KhronosGroup/SPIRV-Headers/archive/$SHADERC_SPIRVHEADERS.tar.gz" \
-	-o "shaderc-spirv-tools-$SHADERC_SPIRVTOOLS.tar.gz" "https://github.com/KhronosGroup/SPIRV-Tools/archive/$SHADERC_SPIRVTOOLS.tar.gz"
+	-o "shaderc-spirv-tools-$SHADERC_SPIRVTOOLS.tar.gz" "https://github.com/KhronosGroup/SPIRV-Tools/archive/$SHADERC_SPIRVTOOLS.tar.gz" \
+	-o "KDDockWidgets-$KDDOCKWIDGETS.tar.gz" "https://github.com/KDAB/KDDockWidgets/archive/v$KDDOCKWIDGETS.tar.gz" \
+	-o "plutovg-$PLUTOVG.tar.gz" "https://github.com/sammycage/plutovg/archive/v$PLUTOVG.tar.gz" \
+	-o "plutosvg-$PLUTOSVG.tar.gz" "https://github.com/sammycage/plutosvg/archive/v$PLUTOSVG.tar.gz"
 
 shasum -a 256 --check SHASUMS
 
@@ -90,20 +99,18 @@ cmake --build build --parallel
 ninja -C build install
 cd ..
 
-echo "Building libjpeg..."
-rm -fr "jpeg-$LIBJPEG"
-tar xf "jpegsrc.v$LIBJPEG.tar.gz"
-cd "jpeg-$LIBJPEG"
-mkdir build
-cd build
-../configure --prefix="$INSTALLDIR" --disable-static --enable-shared
-make "-j$NPROCS"
-make install
-cd ../..
+echo "Building libjpegturbo..."
+rm -fr "libjpeg-turbo-$LIBJPEGTURBO"
+tar xf "libjpeg-turbo-$LIBJPEGTURBO.tar.gz"
+cd "libjpeg-turbo-$LIBJPEGTURBO"
+cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$INSTALLDIR" -DCMAKE_INSTALL_PREFIX="$INSTALLDIR" -DENABLE_STATIC=OFF -DENABLE_SHARED=ON -B build -G Ninja
+cmake --build build --parallel
+ninja -C build install
+cd ..
 
 echo "Building LZ4..."
 rm -fr "lz4-$LZ4"
-tar xf "$LZ4.tar.gz"
+tar xf "lz4-$LZ4.tar.gz"
 cd "lz4-$LZ4"
 cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$INSTALLDIR" -DCMAKE_INSTALL_PREFIX="$INSTALLDIR" -DBUILD_SHARED_LIBS=ON -DLZ4_BUILD_CLI=OFF -DLZ4_BUILD_LEGACY_LZ4C=OFF -B build-dir -G Ninja build/cmake
 cmake --build build-dir --parallel
@@ -192,45 +199,6 @@ echo "Installing Qt Tools..."
 rm -fr "qttools-everywhere-src-$QT"
 tar xf "qttools-everywhere-src-$QT.tar.xz"
 cd "qttools-everywhere-src-$QT"
-# From Mac build-dependencies.sh:
-# Linguist relies on a library in the Designer target, which takes 5-7 minutes to build on the CI
-# Avoid it by not building Linguist, since we only need the tools that come with it
-patch -u src/linguist/CMakeLists.txt <<EOF
---- src/linguist/CMakeLists.txt
-+++ src/linguist/CMakeLists.txt
-@@ -14,7 +14,7 @@
- add_subdirectory(lrelease-pro)
- add_subdirectory(lupdate)
- add_subdirectory(lupdate-pro)
--if(QT_FEATURE_process AND QT_FEATURE_pushbutton AND QT_FEATURE_toolbutton AND TARGET Qt::Widgets AND NOT no-png)
-+if(QT_FEATURE_process AND QT_FEATURE_pushbutton AND QT_FEATURE_toolbutton AND TARGET Qt::Widgets AND TARGET Qt::PrintSupport AND NOT no-png)
-     add_subdirectory(linguist)
- endif()
-EOF
-
-# Also force disable clang scanning, it gets very confused.
-patch -u configure.cmake <<EOF
---- configure.cmake
-+++ configure.cmake
-@@ -14,12 +14,12 @@
- # Presumably because 6.0 ClangConfig.cmake files are not good enough?
- # In any case explicitly request a minimum version of 8.x for now, otherwise
- # building with CMake will fail at compilation time.
--qt_find_package(WrapLibClang 8 PROVIDED_TARGETS WrapLibClang::WrapLibClang)
-+#qt_find_package(WrapLibClang 8 PROVIDED_TARGETS WrapLibClang::WrapLibClang)
- # special case end
-
--if(TARGET WrapLibClang::WrapLibClang)
--    set(TEST_libclang "ON" CACHE BOOL "Required libclang version found." FORCE)
--endif()
-+#if(TARGET WrapLibClang::WrapLibClang)
-+#    set(TEST_libclang "ON" CACHE BOOL "Required libclang version found." FORCE)
-+#endif()
-
-
-
-EOF
-
 mkdir build
 cd build
 "$INSTALLDIR/bin/qt-configure-module" .. -- -DCMAKE_PREFIX_PATH="$INSTALLDIR" -DFEATURE_assistant=OFF -DFEATURE_clang=OFF -DFEATURE_designer=OFF -DFEATURE_kmap2qmap=OFF -DFEATURE_pixeltool=OFF -DFEATURE_pkg_config=OFF -DFEATURE_qev=OFF -DFEATURE_qtattributionsscanner=OFF -DFEATURE_qtdiag=OFF -DFEATURE_qtplugininfo=OFF
@@ -248,6 +216,34 @@ cd build
 cmake --build . --parallel
 ninja install
 cd ../../
+
+echo "Building KDDockWidgets..."
+rm -fr "KDDockWidgets-$KDDOCKWIDGETS"
+tar xf "KDDockWidgets-$KDDOCKWIDGETS.tar.gz"
+cd "KDDockWidgets-$KDDOCKWIDGETS"
+patch -p1 < "$SCRIPTDIR/../common/kddockwidgets-dodgy-include.patch"
+cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$INSTALLDIR" -DCMAKE_INSTALL_PREFIX="$INSTALLDIR" -DKDDockWidgets_QT6=true -DKDDockWidgets_EXAMPLES=false -DKDDockWidgets_FRONTENDS=qtwidgets -B build -G Ninja
+cmake --build build --parallel
+ninja -C build install
+cd ..
+
+echo "Building PlutoVG..."
+rm -fr "plutovg-$PLUTOVG"
+tar xf "plutovg-$PLUTOVG.tar.gz"
+cd "plutovg-$PLUTOVG"
+cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$INSTALLDIR" -DCMAKE_INSTALL_PREFIX="$INSTALLDIR" -DBUILD_SHARED_LIBS=ON -DPLUTOVG_BUILD_EXAMPLES=OFF -B build -G Ninja
+cmake --build build --parallel
+ninja -C build install
+cd ..
+
+echo "Building PlutoSVG..."
+rm -fr "plutosvg-$PLUTOSVG"
+tar xf "plutosvg-$PLUTOSVG.tar.gz"
+cd "plutosvg-$PLUTOSVG"
+cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$INSTALLDIR" -DCMAKE_INSTALL_PREFIX="$INSTALLDIR" -DBUILD_SHARED_LIBS=ON -DPLUTOSVG_ENABLE_FREETYPE=OFF -DPLUTOSVG_BUILD_EXAMPLES=OFF -B build -G Ninja
+cmake --build build --parallel
+ninja -C build install
+cd ..
 
 echo "Building shaderc..."
 rm -fr "shaderc-$SHADERC"

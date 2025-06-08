@@ -1,0 +1,28 @@
+{
+  "name": "plutosvg",
+  "buildsystem": "cmake-ninja",
+  "builddir": true,
+  "config-opts": [
+    "-DBUILD_SHARED_LIBS=ON",
+    "-DPLUTOSVG_BUILD_EXAMPLES=OFF",
+    "-DPLUTOSVG_ENABLE_FREETYPE=ON"
+  ],
+  "build-options": {
+    "strip": true
+  },
+  "sources": [
+    {
+      "type": "git",
+      "url": "https://github.com/sammycage/plutosvg.git",
+      "tag": "v0.0.6"
+    }
+  ],
+  "cleanup": [
+    "/bin",
+    "/include",
+    "/lib/*.a",
+    "/lib/*.la",
+    "/lib/cmake",
+    "/lib/pkgconfig"
+  ]
+}

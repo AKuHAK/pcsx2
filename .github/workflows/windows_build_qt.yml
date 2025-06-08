@@ -12,7 +12,7 @@ on:
       os:
         required: false
         type: string
-        default: windows-2022
+        default: windows-2025
       platform:
         required: false
         type: string
@@ -55,10 +55,30 @@ jobs:
       POWERSHELL_TELEMETRY_OPTOUT: 1
 
     steps:
-      - name: Checkout Repository and Submodules
+      - name: Checkout Repository
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Configure MSBuild Clang Version
+        if: inputs.configuration != 'CMake'
+        shell: pwsh
+        run: |
+          [string[]] $clang_cl = &clang-cl.exe --version
+          
+          $version = [Regex]::Match($clang_cl[0], "(\d+\.\d+\.\d+)")
+          $path = $clang_cl[3].TrimStart("InstalledDir: ").TrimEnd("\bin")
+          
+          $output = @"
+          <Project>
+            <PropertyGroup>
+              <LLVMInstallDir>$path</LLVMInstallDir>
+              <LLVMToolsVersion>$version</LLVMToolsVersion>
+            </PropertyGroup>
+          </Project>
+          "@
+          
+          Write-Host $output
+          
+          $output | Out-File Directory.build.props
 
       # actions/checkout elides tags, fetch them primarily for releases
       - name: Fetch Tags
@@ -98,7 +118,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: deps
-          key: ${{ inputs.os }} ${{ inputs.platform }} deps ${{ hashFiles('.github/workflows/scripts/windows/build-dependencies.bat') }}
+          key: ${{ inputs.os }} ${{ inputs.platform }} deps ${{ hashFiles('.github/workflows/scripts/windows/build-dependencies.bat', '.github/workflows/scripts/common/*.patch') }}
 
       - name: Build Dependencies
         if: steps.cache-deps.outputs.cache-hit != 'true'
@@ -147,8 +167,27 @@ jobs:
             !./bin/**/*.pdb
             !./bin/**/*.lib
 
+      - name: Install the Breakpad Symbol Generator
+        uses: baptiste0928/cargo-install@91c5da15570085bcde6f4d7aed98cb82d6769fd3
+        with:
+          crate: dump_syms
+
+      - name: Generate Breakpad Symbols # Also flatten pdbs to a 'symbols' directory for upload-artifact
+        shell: pwsh
+        run: |
+          mkdir -Force symbols
+          Get-ChildItem -Path ./bin -Recurse -File | Where-Object { 
+            ($_.Extension -eq ".exe" -or $_.Extension -eq ".pdb") -and ($_.Name -notmatch "updater") 
+          } | ForEach-Object { 
+            & dump_syms $_.FullName >> symbols/pcsx2-qt.bpsym
+          }
+          Get-ChildItem -Path ./bin -Recurse -Filter "*.pdb" | ForEach-Object {
+            Copy-Item $_.FullName -Destination symbols/
+          }
+
       - name: Upload artifact - with symbols
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.artifact-metadata.outputs.artifact-name }}-symbols
-          path: ./bin/**/*.pdb
+          path: |
+            ./symbols

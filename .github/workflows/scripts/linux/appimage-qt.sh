@@ -41,6 +41,10 @@ BINARY=pcsx2-qt
 APPDIRNAME=PCSX2.AppDir
 STRIP=strip
 
+declare -a MANUAL_LIBS=(
+	"libshaderc_shared.so.1"
+)
+
 declare -a MANUAL_QT_LIBS=(
 	"libQt6WaylandEglClientHwIntegration.so.6"
 )
@@ -49,6 +53,12 @@ declare -a MANUAL_QT_PLUGINS=(
 	"wayland-decoration-client"
 	"wayland-graphics-integration-client"
 	"wayland-shell-integration"
+)
+
+declare -a REMOVE_LIBS=(
+	'libwayland-client.so*'
+	'libwayland-cursor.so*'
+	'libwayland-egl.so*'
 )
 
 set -e
@@ -76,6 +86,24 @@ fi
 OUTDIR=$(realpath "./$APPDIRNAME")
 rm -fr "$OUTDIR"
 
+echo "Locating extra libraries..."
+EXTRA_LIBS_ARGS=""
+for lib in "${MANUAL_LIBS[@]}"; do
+	srcpath=$(find "$DEPSDIR" -name "$lib")
+	if [ ! -f "$srcpath" ]; then
+		echo "Missinge extra library $lib. Exiting."
+		exit 1
+	fi
+
+	echo "Found $lib at $srcpath."
+
+	if [ "$EXTRA_LIBS_ARGS" == "" ]; then
+		EXTRA_LIBS_ARGS="--library=$srcpath"
+	else
+		EXTRA_LIBS_ARGS="$EXTRA_LIBS_ARGS,$srcpath"
+	fi
+done
+
 # Why the nastyness? linuxdeploy strips our main binary, and there's no option to turn it off.
 # It also doesn't strip the Qt libs. We can't strip them after running linuxdeploy, because
 # patchelf corrupts the libraries (but they still work), but patchelf+strip makes them crash
@@ -97,12 +125,12 @@ cp "$PCSX2DIR/.github/workflows/scripts/linux/pcsx2-qt.desktop" "net.pcsx2.PCSX2
 cp "$PCSX2DIR/bin/resources/icons/AppIconLarge.png" "PCSX2.png"
 
 echo "Running linuxdeploy to create AppDir..."
-EXTRA_QT_PLUGINS="core;gui;network;svg;waylandclient;widgets;xcbqpa" \
+EXTRA_QT_PLUGINS="core;gui;svg;waylandclient;widgets;xcbqpa" \
 EXTRA_PLATFORM_PLUGINS="libqwayland-egl.so;libqwayland-generic.so" \
 DEPLOY_PLATFORM_THEMES="1" \
 QMAKE="$DEPSDIR/bin/qmake" \
 NO_STRIP="1" \
-$LINUXDEPLOY --plugin qt --appdir="$OUTDIR" --executable="$BUILDDIR/bin/pcsx2-qt" \
+$LINUXDEPLOY --plugin qt --appdir="$OUTDIR" --executable="$BUILDDIR/bin/pcsx2-qt" $EXTRA_LIBS_ARGS \
 --desktop-file="net.pcsx2.PCSX2.desktop" --icon-file="PCSX2.png"
 
 echo "Copying resources into AppDir..."
@@ -136,6 +164,16 @@ for GROUP in "${MANUAL_QT_PLUGINS[@]}"; do
 	done
 done
 
+# Why do we have to manually remove these libs? Because the linuxdeploy Qt plugin
+# copies them, not the "main" linuxdeploy binary, and plugins don't inherit the
+# include list...
+for lib in "${REMOVE_LIBS[@]}"; do
+	for libpath in $(find "$OUTDIR/usr/lib" -name "$lib"); do
+		echo "    Removing problematic library ${libpath}."
+		rm -f "$libpath"
+	done
+done
+
 # Restore unstripped deps (for cache).
 rm -fr "$DEPSDIR"
 mv "$DEPSDIR.bak" "$DEPSDIR"
@@ -149,18 +187,16 @@ echo "Generating AppStream metainfo..."
 mkdir -p "$OUTDIR/usr/share/metainfo"
 "$SCRIPTDIR/generate-metainfo.sh" "$OUTDIR/usr/share/metainfo/net.pcsx2.PCSX2.appdata.xml"
 
-# Copy in AppRun hooks.
-# Unfortunately linuxdeploy is a bit lame and doesn't let us provide our own AppRun hooks, instead
-# they have to come from plugins.. and screw writing one of those just to disable Wayland.
-echo "Copying AppRun hooks..."
-mkdir -p "$OUTDIR/apprun-hooks"
-for hookpath in "$SCRIPTDIR/apprun-hooks"/*; do
-	hookname=$(basename "$hookpath")
-	cp -v "$hookpath" "$OUTDIR/apprun-hooks/$hookname"
-	sed -i -e 's/exec /source "$this_dir"\/apprun-hooks\/"'"$hookname"'"\nexec /' "$OUTDIR/AppRun"
-done
-
 echo "Generating AppImage..."
+GIT_VERSION=$(git tag --points-at HEAD)
+
+if [[ "${GIT_VERSION}" == "" ]]; then
+	# In the odd event that we run this script before the release gets tagged.
+	GIT_VERSION=$(git describe --tags || true)
+	if [[ "${GIT_VERSION}" == "" ]]; then
+		GIT_VERSION=$(git rev-parse HEAD)
+	fi
+fi
+
 rm -f "$NAME.AppImage"
 $APPIMAGETOOL -v "$OUTDIR" "$NAME.AppImage"
-

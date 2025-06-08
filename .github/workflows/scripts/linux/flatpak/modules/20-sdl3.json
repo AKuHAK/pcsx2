@@ -1,5 +1,5 @@
 {
-  "name": "sdl2",
+  "name": "sdl3",
   "buildsystem": "cmake-ninja",
   "builddir": true,
   "config-opts": [
@@ -14,8 +14,8 @@
   "sources": [
     {
       "type": "archive",
-      "url": "https://libsdl.org/release/SDL2-2.30.3.tar.gz",
-      "sha256": "820440072f8f5b50188c1dae104f2ad25984de268785be40c41a099a510f0aec"
+      "url": "https://libsdl.org/release/SDL3-3.2.14.tar.gz",
+      "sha256": "b7e7dc05011b88c69170fe18935487b2559276955e49113f8c1b6b72c9b79c1f"
     }
   ],
   "cleanup": [
