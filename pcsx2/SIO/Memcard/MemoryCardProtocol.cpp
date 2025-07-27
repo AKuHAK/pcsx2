@@ -93,9 +93,17 @@ void generateResponse()
 		Error error;
 		std::string path = Path::Canonicalize(EmuConfig.Security.MgChallengeIvFile);
 		auto fp = FileSystem::OpenManagedCFileTryIgnoreCase(path.c_str(), "rb", &error);
-		if (!fp || std::fread(challengeIV, 1, sizeof(challengeIV), fp.get()) != 1)
+		if (!fp)
 		{
-			ERROR_LOG("Failed to read Challenge IV file at {}: {}", path, error.GetDescription());
+			ERROR_LOG("Failed to open Challenge IV file at {}: {}", path, error.GetDescription());
+		}
+		else
+		{
+			size_t read = std::fread(challengeIV, 1, sizeof(challengeIV), fp.get());
+			if (read != sizeof(challengeIV))
+			{
+				ERROR_LOG("Failed to read {} bytes from {}: only {} bytes read", sizeof(challengeIV), path, read);
+			}
 		}
 	}
 
@@ -238,7 +246,7 @@ void MemoryCardProtocol::GetSpecs()
 	McdSizeInfo info;
 	mcd->GetSizeInfo(info);
 	g_Sio2FifoOut.push_back(0x2b);
-	
+
 	const u8 sectorSizeLSB = (info.SectorSize & 0xff);
 	//checksum ^= sectorSizeLSB;
 	g_Sio2FifoOut.push_back(sectorSizeLSB);
@@ -270,7 +278,7 @@ void MemoryCardProtocol::GetSpecs()
 	const u8 sectorCountMSB = (info.McdSizeInSectors >> 24);
 	//checksum ^= sectorCountMSB;
 	g_Sio2FifoOut.push_back(sectorCountMSB);
-	
+
 	g_Sio2FifoOut.push_back(info.Xor);
 	g_Sio2FifoOut.push_back(mcd->term);
 }

@@ -228,7 +228,7 @@ static void cdvdCreateNewNVM()
 			}
 		}
 	}
-	
+
 	std::memcpy(&s_nvram[nvmLayout->ilinkId], ILinkID_Data, sizeof(ILinkID_Data));
 	if (nvmlayouts[1].biosVer <= BiosVersion)
 	{
@@ -294,7 +294,7 @@ void cdvdLoadNVRAM()
 		fp = FileSystem::OpenManagedCFileTryIgnoreCase(mecfile.c_str(), "wb");
 
 		u8 version[4];
-		
+
 		int index = ((BiosVersion >> 8) - 1) * 10 + ((BiosVersion & 0xff) / 10);
 		if ((index > 13) || (index < 0))
 			index = 13;
@@ -304,7 +304,7 @@ void cdvdLoadNVRAM()
 			version[0] = BiosRegion;
 
 		memcpy(&s_mecha_version, version, 4);
-		
+
 		if (!fp || std::fwrite(&s_mecha_version, sizeof(s_mecha_version), 1, fp.get()) != 1)
 			Host::ReportErrorAsync("Error", "Failed to write MEC file. Check your BIOS setup/permission settings.");
 	}
@@ -1282,9 +1282,17 @@ void cdvdReset()
 		Error error;
 		std::string path = Path::Canonicalize(EmuConfig.Security.MgEncryptedKeyStoreFile);
 		auto fp = FileSystem::OpenManagedCFileTryIgnoreCase(path.c_str(), "rb", &error);
-		if (!fp || std::fread(g_EncryptedKeyStore, 1, sizeof(g_EncryptedKeyStore), fp.get()) != 1)
+		if (!fp)
 		{
-			ERROR_LOG("Failed to read Encrypted Key Store file at {}: {}", path, error.GetDescription());
+			ERROR_LOG("Failed to open Encrypted Key Store file at {}: {}", path, error.GetDescription());
+		}
+		else
+		{
+			size_t read = std::fread(g_EncryptedKeyStore, 1, sizeof(g_EncryptedKeyStore), fp.get());
+			if (read != sizeof(g_EncryptedKeyStore))
+			{
+				ERROR_LOG("Failed to read {} bytes from {}: only {} bytes read", sizeof(g_EncryptedKeyStore), path, read);
+			}
 		}
 	}
 
@@ -1293,9 +1301,17 @@ void cdvdReset()
 		Error error;
 		std::string path = Path::Canonicalize(EmuConfig.Security.MgCardKeyStoreFile);
 		auto fp = FileSystem::OpenManagedCFileTryIgnoreCase(path.c_str(), "rb", &error);
-		if (!fp || std::fread(g_cardKeyStore, 1, sizeof(g_cardKeyStore), fp.get()) != 1)
+		if (!fp)
 		{
-			ERROR_LOG("Failed to read Card Key Store file at {}: {}", path, error.GetDescription());
+			ERROR_LOG("Failed to open Card Key Store file at {}: {}", path, error.GetDescription());
+		}
+		else
+		{
+			size_t read = std::fread(g_cardKeyStore, 1, sizeof(g_cardKeyStore), fp.get());
+			if (read != sizeof(g_cardKeyStore))
+			{
+				ERROR_LOG("Failed to read {} bytes from {}: only {} bytes read", sizeof(g_cardKeyStore), path, read);
+			}
 		}
 	}
 
@@ -1304,9 +1320,17 @@ void cdvdReset()
 		Error error;
 		std::string path = Path::Canonicalize(EmuConfig.Security.MgKeyStoreKeyFile);
 		auto fp = FileSystem::OpenManagedCFileTryIgnoreCase(path.c_str(), "rb", &error);
-		if (!fp || std::fread(g_KeyStoreKey, 1, sizeof(g_KeyStoreKey), fp.get()) != 1)
+		if (!fp)
 		{
-			ERROR_LOG("Failed to read Key Store Key file at {}: {}", path, error.GetDescription());
+			ERROR_LOG("Failed to open Key Store Key file at {}: {}", path, error.GetDescription());
+		}
+		else
+		{
+			size_t read = std::fread(g_KeyStoreKey, 1, sizeof(g_KeyStoreKey), fp.get());
+			if (read != sizeof(g_KeyStoreKey))
+			{
+				ERROR_LOG("Failed to read {} bytes from {}: only {} bytes read", sizeof(g_KeyStoreKey), path, read);
+			}
 		}
 	}
 
@@ -1556,7 +1580,7 @@ __fi void cdvdActionInterrupt()
 			cdvdUpdateStatus(CDVD_STATUS_PAUSE);
 			break;
 	}
-	
+
 	cdvd.Action = cdvdAction_None;
 	cdvdSetIrq();
 }
@@ -1802,7 +1826,7 @@ static uint cdvdStartSeek(uint newsector, CDVD_MODE_TYPE mode, bool transition_t
 		CDVD_LOG("CdSeek Begin > Contiguous block without seek - delta=%d sectors", delta);
 
 		// if delta > 0 it will read a new sector so the readInterrupt will account for this.
-		
+
 		isSeeking = false;
 
 		if (cdvd.Action != cdvdAction_Seek)
@@ -3161,7 +3185,7 @@ static void executeMechaHandler()
 		break;
 	}
 }
-	
+
 
 static void cdvdWrite16(u8 rt) // SCOMMAND
 {
@@ -3177,7 +3201,7 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 		cdvd.sCommand = rt;
 		std::memset(&cdvd.SCMDResultBuff[0], 0, sizeof(cdvd.SCMDResultBuff));
 		std::memcpy(temp_mechaver, &s_mecha_version, 4);
-		
+
 		switch (rt)
 		{
 				//		case 0x01: // GetDiscType - from cdvdman (0:1)
@@ -3970,7 +3994,7 @@ static void cdvdWrite16(u8 rt) // SCOMMAND
 					cdvd.mecha_state = MECHA_STATE_READY;
 				}
 				break;
-			
+
 		case 0x8F: // secrman: __mechacon_auth_0x8F
 				SetSCMDResultSize(1); //in:0
 				cdvd.SCMDResultBuff[0] = 0x80;
@@ -4257,7 +4281,7 @@ void cdvdWrite(u8 key, u8 rt)
 		case 0x09:
 			/*
 				The register 0xC, 0xD, 0xE give back MSF of the current sector being read/played from the actual DSP hardware. They are named "where" registers : where0, where1, where2.
-				They can be read anytime on hw as long as there is a valid disc and mode configured properly. Register 0x9 is where_select register which determines the mode for this registers. The mode must be set according to the used disc. 
+				They can be read anytime on hw as long as there is a valid disc and mode configured properly. Register 0x9 is where_select register which determines the mode for this registers. The mode must be set according to the used disc.
 				0 = CDDA
 				1 = CDROM
 				2 = DVD
