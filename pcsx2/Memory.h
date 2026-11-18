@@ -162,7 +162,13 @@ namespace SysMemory
 extern void memSetKernelMode();
 //extern void memSetSupervisorMode();
 extern void memSetUserMode();
+// Map a page readable but not writable, so a store raises TLB Modified.
+extern void memSetPageAddrReadOnly(u32 vaddr);
 extern void memSetPageAddr(u32 vaddr, u32 paddr);
+
+// kuseg is TLB-mapped except while Status.ERL = 1, when it is direct-mapped to
+// physical memory (EE Core User's Manual Fig. 5-1, note 3).
+extern bool memApplyKuseg(bool erlDirect);
 extern void memClearPageAddr(u32 vaddr);
 extern void memBindConditionalHandlers();
 extern bool memGetExtraMemMode();

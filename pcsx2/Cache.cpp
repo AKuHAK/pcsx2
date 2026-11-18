@@ -501,8 +501,14 @@ namespace R5900
 					}
 
 					default:
-						DevCon.Warning("Cache mode %x not implemented", _Rt_);
+					{
+						// Rate-limited: rare for games, constant under a real
+						// OS doing cache maintenance.
+						static int s_cacheSpamStop = 0;
+						if (s_cacheSpamStop++ < 50)
+							DevCon.Warning("Cache mode %x not implemented (%d)", _Rt_, s_cacheSpamStop);
 						break;
+					}
 				}
 			}
 		} // end namespace OpcodeImpl

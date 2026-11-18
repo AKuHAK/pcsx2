@@ -46,7 +46,7 @@ int ATA::Open(const std::string& hddPath)
 	if (!FileSystem::FileExists(hddPath.c_str()))
 		return -1;
 
-	hddImage = FileSystem::OpenCFile(hddPath.c_str(), "r+b");
+	hddImage = FileSystem::OpenSharedCFile(hddPath.c_str(), "r+b", FileSystem::FileShareMode::DenyNone);
 	const s64 size = hddImage ? FileSystem::FSize64(hddImage) : -1;
 	if (!hddImage || size < 0)
 	{
@@ -416,13 +416,28 @@ u16 ATA::Read(u32 addr, int width)
 
 void ATA::Write(u32 addr, u16 value, int width)
 {
-	if ((addr != ATA_R_CMD && addr != ATA_R_CONTROL) && (regStatus & (ATA_STAT_BUSY | ATA_STAT_DRQ)) != 0)
+	// PIO data-out writes the data register precisely while DRQ is asserted, so
+	// it cannot pass the general guard below; it is still refused while BUSY.
+	if (addr == ATA_R_DATA)
+	{
+		if ((regStatus & ATA_STAT_BUSY) != 0)
+		{
+			Console.Error("DEV9: ATA: DEVICE BUSY, DROPPING WRITE");
+			return;
+		}
+	}
+	else if ((addr != ATA_R_CMD && addr != ATA_R_CONTROL) && (regStatus & (ATA_STAT_BUSY | ATA_STAT_DRQ)) != 0)
 	{
 		Console.Error("DEV9: ATA: DEVICE BUSY, DROPPING WRITE");
 		return;
 	}
 	switch (addr)
 	{
+		case ATA_R_DATA:
+			if (width == 8)
+				Console.Error("DEV9:ATA : ATA_R_DATA 8bit write???, Active %s", (GetSelectedDevice() == 0) ? "True" : "False");
+			ATAwritePIO(value);
+			break;
 		case ATA_R_FEATURE:
 			//DevCon.WriteLn("DEV9: ATA: ATA_R_FEATURE %dbit write %x", width, value);
 			ClearHOB();

@@ -23,6 +23,7 @@ BIOS
 */
 
 #include "DEV9/DEV9.h"
+#include <cstdlib>
 #include "IopHw.h"
 #include "GS/Renderers/Common/GSFunctionMap.h"
 #include "GS.h"
@@ -41,6 +42,8 @@ BIOS
 #ifdef ENABLECACHE
 #include "Cache.h"
 #endif
+
+static const bool s_dev9Trace = (std::getenv("PCSX2_DEV9_TRACE") != nullptr);
 
 namespace Ps2MemSize
 {
@@ -528,7 +531,8 @@ static mem8_t _ext_memRead8 (u32 mem)
 		case 7: // dev9
 		{
 			mem8_t retval = DEV9read8(mem & ~0xa4000000);
-			Console.WriteLn("DEV9 read8 %8.8lx: %2.2lx", mem & ~0xa4000000, retval);
+			if (s_dev9Trace)
+				Console.WriteLn("DEV9 read8 %8.8lx: %2.2lx", mem & ~0xa4000000, retval);
 			return retval;
 		}
 		case 9:
@@ -558,7 +562,8 @@ static mem16_t _ext_memRead16(u32 mem)
 		case 7: // dev9
 		{
 			mem16_t retval = DEV9read16(mem & ~0xa4000000);
-			Console.WriteLn("DEV9 read16 %8.8lx: %4.4lx", mem & ~0xa4000000, retval);
+			if (s_dev9Trace)
+				Console.WriteLn("DEV9 read16 %8.8lx: %4.4lx", mem & ~0xa4000000, retval);
 			return retval;
 		}
 
@@ -584,7 +589,8 @@ static mem32_t _ext_memRead32(u32 mem)
 		case 7: // dev9
 		{
 			mem32_t retval = DEV9read32(mem & ~0xa4000000);
-			Console.WriteLn("DEV9 read32 %8.8lx: %8.8lx", mem & ~0xa4000000, retval);
+			if (s_dev9Trace)
+				Console.WriteLn("DEV9 read32 %8.8lx: %8.8lx", mem & ~0xa4000000, retval);
 			return retval;
 		}
 		case 9:
@@ -655,7 +661,8 @@ static void _ext_memWrite8 (u32 mem, mem8_t  value)
 			gsWrite8(mem, value); return;
 		case 7: // dev9
 			DEV9write8(mem & ~0xa4000000, value);
-			Console.WriteLn("DEV9 write8 %8.8lx: %2.2lx", mem & ~0xa4000000, value);
+			if (s_dev9Trace)
+				Console.WriteLn("DEV9 write8 %8.8lx: %2.2lx", mem & ~0xa4000000, value);
 			return;
 		case 9:
 			iopMemWrite8(mem & ~0x1c000000, value);
@@ -679,7 +686,8 @@ static void _ext_memWrite16(u32 mem, mem16_t value)
 			gsWrite16(mem, value); return;
 		case 7: // dev9
 			DEV9write16(mem & ~0xa4000000, value);
-			Console.WriteLn("DEV9 write16 %8.8lx: %4.4lx", mem & ~0xa4000000, value);
+			if (s_dev9Trace)
+				Console.WriteLn("DEV9 write16 %8.8lx: %4.4lx", mem & ~0xa4000000, value);
 			return;
 		case 8: // spu2
 			SPU2write(mem, value); return;
@@ -700,7 +708,8 @@ static void _ext_memWrite32(u32 mem, mem32_t value)
 			gsWrite32(mem, value); return;
 		case 7: // dev9
 			DEV9write32(mem & ~0xa4000000, value);
-			Console.WriteLn("DEV9 write32 %8.8lx: %8.8lx", mem & ~0xa4000000, value);
+			if (s_dev9Trace)
+				Console.WriteLn("DEV9 write32 %8.8lx: %8.8lx", mem & ~0xa4000000, value);
 			return;
 		case 9:
 			iopMemWrite32(mem & ~0x1c000000, value);
@@ -975,6 +984,11 @@ void memSetPageAddr(u32 vaddr, u32 paddr)
 
 }
 
+void memSetPageAddrReadOnly(u32 vaddr)
+{
+	vtlb_VMapWriteProtected(vaddr, 0x1000);
+}
+
 void memClearPageAddr(u32 vaddr)
 {
 	//Console.WriteLn("memClearPageAddr: %8.8x", vaddr);
@@ -1029,6 +1043,28 @@ void memBindConditionalHandlers()
 void memAllocate()
 {
 	eeMem = reinterpret_cast<EEVM_MemoryAllocMess*>(SysMemory::GetEEMem());
+}
+
+static bool s_kusegDirect = true;
+
+bool memApplyKuseg(bool erlDirect)
+{
+	if (erlDirect == s_kusegDirect)
+		return false;
+
+	s_kusegDirect = erlDirect;
+
+	if (erlDirect)
+	{
+		vtlb_VMap(0x00000000, 0x00000000, 0x20000000);
+		vtlb_VMapUnmap(0x20000000, 0x60000000);
+	}
+	else
+	{
+		vtlb_VMapUnmap(0x00000000, 0x80000000);
+	}
+
+	return true;
 }
 
 void memReset()
@@ -1146,8 +1182,10 @@ void memReset()
 	memMapUserMem();
 	memSetKernelMode();
 
-	vtlb_VMap(0x00000000,0x00000000,0x20000000);
-	vtlb_VMapUnmap(0x20000000,0x60000000);
+	// kuseg is TLB-mapped except when Status.ERL = 1 (boot/error level).
+	// Force update on reset because s_kusegDirect may already be true.
+	s_kusegDirect = false;
+	memApplyKuseg(true);
 
 	std::memset(s_ba, 0, sizeof(s_ba));
 

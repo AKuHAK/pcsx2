@@ -66,6 +66,7 @@ void cpuReset()
 	cpuRegs.pc				= 0xbfc00000; //set pc reg to stack
 	cpuRegs.CP0.n.Config	= 0x440;
 	cpuRegs.CP0.n.Status.val= 0x70400004; //0x10900000 <-- wrong; // COP0 enabled | BEV = 1 | TS = 1
+	cpuRegs.CP0.n.Random	= 47;   // top TLB index; counts down towards Wired
 	cpuRegs.CP0.n.PRid		= 0x00002e20; // PRevID = Revision ID, same as R5900
 	fpuRegs.fprc[0]			= 0x00002e30; // fpu Revision..
 	fpuRegs.fprc[31]		= 0x01000001; // fpu Status/Control
@@ -73,6 +74,8 @@ void cpuReset()
 	cpuRegs.nextEventCycle = cpuRegs.cycle + 4;
 	EEsCycle = 0;
 	EEoCycle = cpuRegs.cycle;
+
+	cpuUpdateOperationMode();
 
 	psxReset();
 	pgifInit();
@@ -91,12 +94,16 @@ void cpuReset()
 	CBreakPoints::ClearSkipFirst();
 }
 
+static bool eeTlbInvalidMatch = false;
+
 __ri void cpuException(u32 code, u32 bd)
 {
 	bool errLevel2, checkStatus;
 	u32 offset = 0;
 
     cpuRegs.branch = 0;		// Tells the interpreter that an exception occurred during a branch.
+	const bool tlbInvalid = eeTlbInvalidMatch;
+	eeTlbInvalidMatch = false;
 	cpuRegs.CP0.n.Cause = code & 0xffff;
 
 	if(cpuRegs.CP0.n.Status.b.ERL == 0)
@@ -106,7 +113,7 @@ __ri void cpuException(u32 code, u32 bd)
 		checkStatus = (cpuRegs.CP0.n.Status.b.BEV == 0); //  for TLB/general exceptions
 
 		if (((code & 0x7C) >= 0x8) && ((code & 0x7C) <= 0xC))
-			offset = 0x0; //TLB Refill
+			offset = tlbInvalid ? 0x180 : 0x0; // TLB Invalid vs Refill
 		else if ((code & 0x7C) == 0x0)
 			offset = 0x200; //Interrupt
 		else
@@ -140,7 +147,9 @@ __ri void cpuException(u32 code, u32 bd)
 		cpuRegs.CP0.n.Status.b.EXL = 1;
 		if (bd)
 		{
-			Console.Warning("branch delay!!");
+			static int s_bdSpamStop = 0;
+			if (s_bdSpamStop++ < 50 || IsDevBuild)
+				Console.Warning("branch delay!! (%d)", s_bdSpamStop);
 			cpuRegs.CP0.n.EPC = cpuRegs.pc - 4;
 			cpuRegs.CP0.n.Cause |= 0x80000000;
 		}
@@ -164,8 +173,29 @@ __ri void cpuException(u32 code, u32 bd)
 	cpuUpdateOperationMode();
 }
 
+static bool eeTlbMatches(u32 va)
+{
+	for (int i = 0; i < 48; i++)
+	{
+		const u32 pageSize = (tlb[i].Mask() + 1) << 12;
+		const u32 base = tlb[i].VPN2();
+
+		if (va < base || (va - base) >= pageSize * 2)
+			continue;
+		if (!tlb[i].isGlobal() && (tlb[i].EntryHi.ASID != (cpuRegs.CP0.n.EntryHi & 0xff)))
+			continue;
+
+		return true;
+	}
+	return false;
+}
+
 void cpuTlbMiss(u32 addr, u32 bd, u32 excode)
 {
+	// Must be decided before EntryHi is rewritten below, since the ASID in it
+	// is what the match is against.
+	eeTlbInvalidMatch = eeTlbMatches(addr);
+
 	// Avoid too much spamming on the interpreter
 	if (Cpu != &intCpu || IsDebugBuild) {
 		Console.Error("cpuTlbMiss pc:%x, cycl:%llx, addr: %x, status=%x, code=%x",
@@ -179,6 +209,10 @@ void cpuTlbMiss(u32 addr, u32 bd, u32 excode)
 
 	cpuRegs.pc -= 4;
 	cpuException(excode, bd);
+}
+
+void cpuTlbModified(u32 addr, u32 bd) {
+	cpuTlbMiss(addr, bd, EXC_CODE(1));
 }
 
 void cpuTlbMissR(u32 addr, u32 bd) {

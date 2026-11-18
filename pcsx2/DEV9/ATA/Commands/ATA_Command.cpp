@@ -50,8 +50,26 @@ void ATA::IDE_ExecCmd(u16 value)
 		case 0xB0:
 			HDD_Smart();
 			break;
+		case 0x30:
+			HDD_WriteSectors(false);
+			break;
+		case 0x34:
+			if (lba48Supported)
+				HDD_WriteSectors(true);
+			else
+				HDD_Unk();
+			break;
+		case 0x39:
+			if (lba48Supported)
+				HDD_WriteMultiple(true);
+			else
+				HDD_Unk();
+			break;
 		case 0xC4:
 			HDD_ReadMultiple(false);
+			break;
+		case 0xC5:
+			HDD_WriteMultiple(false);
 			break;
 		case 0xC6:
 			HDD_SetMultipleMode();

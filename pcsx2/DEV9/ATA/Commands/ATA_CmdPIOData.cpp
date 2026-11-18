@@ -54,7 +54,84 @@ u16 ATA::ATAreadPIO()
 	}
 	return 0xFF;
 }
-//ATAwritePIO
+void ATA::DRQCmdPIODataFromHost(bool sendIRQ)
+{
+	//Device is ready to accept one sector from the host
+	pioPtr = 0;
+	pioEnd = 256; //words
+
+	regStatus &= ~ATA_STAT_BUSY;
+	regStatus |= ATA_STAT_DRQ;
+
+	// Only set pendingInterrupt if nIEN is cleared. The first block of a PIO
+	// data-out command raises no interrupt: the host polls for DRQ instead, and
+	// INTRQ only follows each block the device has taken.
+	if (regControlEnableIRQ && sendIRQ)
+	{
+		pendingInterrupt = true;
+		_DEV9irq(ATA_INTR_INTRQ, 1);
+	}
+}
+
+void ATA::PostCmdPIODataFromHost()
+{
+	pioPtr = 0;
+	pioEnd = 0;
+
+	//A whole sector is in the PIO buffer, move it into the write buffer
+	memcpy(&currentWrite[wrTransferred], pioBuffer, 512);
+	wrTransferred += 512;
+
+	regStatus &= ~ATA_STAT_DRQ;
+	regStatus |= ATA_STAT_BUSY;
+
+	if (wrTransferred >= nsector * 512)
+	{
+		//Whole transfer received, hand it to the disk. Ownership of
+		//currentWrite passes to the queue, which frees it.
+		WriteQueueEntry entry{0};
+		entry.data = currentWrite;
+		entry.length = currentWriteLength;
+		entry.sector = currentWriteSectors;
+		writeQueue.Enqueue(entry);
+		currentWrite = nullptr;
+		currentWriteLength = 0;
+		currentWriteSectors = 0;
+		wrTransferred = 0;
+		nsectorLeft = 0;
+
+		HDD_SetErrorAtTransferEnd();
+
+		if (fetWriteCacheEnabled)
+		{
+			regStatus &= ~ATA_STAT_BUSY;
+			pendingInterrupt = true;
+			if (regControlEnableIRQ)
+				_DEV9irq(ATA_INTR_INTRQ, 1);
+		}
+		else
+			awaitFlush = true;
+
+		Async(-1);
+	}
+	else
+	{
+		//More to come. Interrupt on each block boundary, mirroring the read path.
+		DRQCmdPIODataFromHost(((wrTransferred / 512) % sectorsPerInterrupt) == 0);
+	}
+}
+
+//FromHost, data-out
+void ATA::ATAwritePIO(u16 value)
+{
+	if (pioPtr < pioEnd)
+	{
+		*(u16*)&pioBuffer[pioPtr * 2] = value;
+		pioPtr++;
+		if (pioPtr >= pioEnd) //Finished transfer of this sector
+			PostCmdPIODataFromHost();
+	}
+}
 
 void ATA::HDD_IdentifyDevice()
 {
@@ -144,6 +221,58 @@ void ATA::HDD_ReadPIOEndBlock()
 
 //Write Multiple
 
+void ATA::HDD_WriteMultiple(bool isLBA48)
+{
+	sectorsPerInterrupt = curMultipleSectorsSetting;
+	HDD_WritePIO(isLBA48);
+}
+
 //Write Sectors
+
+void ATA::HDD_WriteSectors(bool isLBA48)
+{
+	sectorsPerInterrupt = 1;
+	HDD_WritePIO(isLBA48);
+}
+
+void ATA::HDD_WritePIO(bool isLBA48)
+{
+	if (!PreCmd())
+		return;
+	DevCon.WriteLn(isLBA48 ? "DEV9: HDD_WritePIO48" : "DEV9: HDD_WritePIO");
+
+	if (sectorsPerInterrupt == 0)
+	{
+		CmdNoDataAbort();
+		return;
+	}
+
+	IDE_CmdLBA48Transform(isLBA48);
+
+	regStatus &= ~ATA_STAT_SEEK;
+	if (!HDD_CanSeek())
+	{
+		Console.Error("DEV9: ATA: Transfer to invalid LBA %lu", HDD_GetLBA());
+		nsector = -1;
+		regStatus |= ATA_STAT_ERR;
+		regStatusSeekLock = -1;
+		regError |= ATA_ERR_ID;
+		PostCmdNoData();
+		return;
+	}
+	else
+		regStatus |= ATA_STAT_SEEK;
+
+	if (!HDD_CanAssessOrSetError())
+		return;
+
+	nsectorLeft = nsector;
+	currentWrite = new u8[nsector * 512];
+	currentWriteLength = nsector * 512;
+	currentWriteSectors = HDD_GetLBA();
+	wrTransferred = 0;
+
+	DRQCmdPIODataFromHost(false);
+}
 
 //Download Microcode (Used for FW updates)

@@ -509,10 +509,16 @@ void DSRLV(){ if (!_Rd_) return; cpuRegs.GPR.r[_Rd_].UD[0] = (u64)(cpuRegs.GPR.r
 
 __noinline static void RaiseAddressError(u32 addr, bool store)
 {
-	const std::string message(fmt::format("Address Error, addr=0x{:x} [{}]", addr, store ? "store" : "load"));
+	static int spamStop = 0;
+	if (spamStop++ < 50 || IsDevBuild)
+	{
+		Console.Error(fmt::format("Address Error, addr=0x{:x} [{}] pc=0x{:x}",
+			addr, store ? "store" : "load", cpuRegs.pc));
+	}
 
-	// TODO: This doesn't actually get raised in the CPU yet.
-	Console.Error(message);
+	cpuRegs.CP0.n.BadVAddr = addr;
+	cpuRegs.pc -= 4;
+	cpuException(store ? EXC_CODE_AdES : EXC_CODE_AdEL, cpuRegs.branch);
 
 	Cpu->CancelInstruction();
 }
@@ -909,12 +915,23 @@ void SYSCALL()
 {
 	u8 call;
 
+	const bool linuxSyscall =
+		cpuRegs.GPR.n.v0.UL[0] >= 4000 && cpuRegs.GPR.n.v0.UL[0] < 5000 &&
+		cpuRegs.pc < 0x80000000;
+
 	if (cpuRegs.GPR.n.v1.SL[0] < 0)
 		call = (u8)(-cpuRegs.GPR.n.v1.SL[0]);
 	else
 		call = cpuRegs.GPR.n.v1.UC[0];
 
 	BIOS_LOG("Bios call: %s (%x)", R5900::bios[call], call);
+
+	if (linuxSyscall)
+	{
+		cpuRegs.pc -= 4;
+		cpuException(0x20, cpuRegs.branch);
+		return;
+	}
 
 
 	switch (static_cast<Syscall>(call))
@@ -1047,7 +1064,15 @@ void SYSCALL()
 				u32 offset = cpuRegs.GPR.n.a2.UL[0];
 
 				if (offset + size > 2)
-					Console.Warning("Warning: GetOsdConfigParam2 Reading extended language/version configs, may be incorrect!");
+				{
+					static int spamStop = 0;
+					if (spamStop++ < 3)
+					{
+						Console.Warning("Warning: GetOsdConfigParam2 Reading extended "
+							"language/version configs, may be incorrect!%s",
+							spamStop == 3 ? " (further instances suppressed)" : "");
+					}
+				}
 
 				for (u32 i = 0; i < size; i++)
 				{

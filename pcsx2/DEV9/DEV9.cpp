@@ -338,7 +338,7 @@ void IOPWriteFIFO()
 		const int was = SPD_DBUF_AVAIL_MAX * 512 - base;
 
 		std::memcpy(dev9.fifo + base, dev9.dma_iop_ptr + dev9.dma_iop_transfered, was);
-		std::memcpy(dev9.fifo + base, dev9.dma_iop_ptr + dev9.dma_iop_transfered + was, write - was);
+		std::memcpy(dev9.fifo, dev9.dma_iop_ptr + dev9.dma_iop_transfered + was, write - was);
 	}
 	else
 	{
@@ -394,43 +394,46 @@ void DEV9runFIFO()
 	const bool iopWrite = dev9.xfr_ctrl & SPD_XFR_WRITE; // IOP writes to FIFO
 	const bool hddRead = dev9.if_ctrl & SPD_IF_READ; // HDD writes to FIFO
 
-	const bool iopXfer = (dev9.dma_iop_ptr != nullptr) && (dev9.xfr_ctrl & SPD_XFR_DMAEN);
-	const bool hddXfer = dev9.ata->dmaReady && (dev9.if_ctrl & SPD_IF_ATA_DMAEN);
-
-	// Order operations based on iopWrite to ensure DMA has data/space to work with.
-	if (iopWrite)
+	// Pump the 8 KB FIFO until neither IOP DMA nor ATA DMA can advance further.
+	while (true)
 	{
-		// Perform DMA from IOP.
-		if (iopXfer)
-			IOPWriteFIFO();
+		const bool iopXfer = (dev9.dma_iop_ptr != nullptr) && (dev9.xfr_ctrl & SPD_XFR_DMAEN) &&
+							 (dev9.dma_iop_transfered < dev9.dma_iop_size);
+		const bool hddXfer = dev9.ata->dmaReady && (dev9.if_ctrl & SPD_IF_ATA_DMAEN);
 
-		// Drain the FIFO
-		if (hddXfer && !hddRead)
+		const int prevWrite = dev9.fifo_bytes_write;
+		const int prevRead = dev9.fifo_bytes_read;
+
+		// Order operations based on iopWrite to ensure DMA has data/space to work with.
+		if (iopWrite)
 		{
-			HDDReadFIFO();
+			// Perform DMA from IOP.
+			if (iopXfer)
+				IOPWriteFIFO();
+
+			// Drain the FIFO
+			if (hddXfer && !hddRead)
+			{
+				HDDReadFIFO();
+			}
 		}
-	}
-	else
-	{
-		// Ensure FIFO has data.
-		if (hddXfer && hddRead)
+		else
 		{
-			HDDWriteFIFO();
-		}
-
-		if (iopXfer)
-		{
-			// Perform DMA to IOP.
-			IOPReadFIFO();
-
-			// Refill FIFO after DMA.
-			// Need to recheck dmaReady incase prior
-			// HDDWriteFIFO competed the transfer from HDD
-			if (hddXfer && hddRead && dev9.ata->dmaReady)
+			// Ensure FIFO has data.
+			if (hddXfer && hddRead)
 			{
 				HDDWriteFIFO();
 			}
+
+			if (iopXfer)
+			{
+				// Perform DMA to IOP.
+				IOPReadFIFO();
+			}
 		}
+
+		if (dev9.fifo_bytes_write == prevWrite && dev9.fifo_bytes_read == prevRead)
+			break;
 	}
 
 	FIFOIntr();
@@ -753,9 +756,9 @@ void SpeedWrite(u32 addr, u16 value, int width)
 			//	DEV9_LOG("DEV9: IF_CTRL Wait for ATA register read Disabled");
 
 			if (value & (1 << 4))
-				Console.Error("DEV9: IF_CTRL Unknown Bit 4 Set");
+				DEV9_LOG("DEV9: IF_CTRL Unknown Bit 4 Set");
 			if (value & (1 << 5))
-				Console.Error("DEV9: IF_CTRL Unknown Bit 5 Set");
+				DEV9_LOG("DEV9: IF_CTRL Unknown Bit 5 Set");
 
 			if ((value & SPD_IF_HDD_RESET) == 0) //Maybe?
 			{
@@ -1111,7 +1114,6 @@ void DEV9readDMA8Mem(u32* pMem, int size)
 	{
 		if (!(dev9.xfr_ctrl & SPD_XFR_WRITE))
 		{
-			pxAssert(size <= SPD_DBUF_AVAIL_MAX * 512);
 			dev9.dma_iop_ptr = reinterpret_cast<u8*>(pMem);
 			dev9.dma_iop_size = size;
 			dev9.dma_iop_transfered = 0;
@@ -1146,7 +1148,6 @@ void DEV9writeDMA8Mem(u32* pMem, int size)
 	{
 		if (dev9.xfr_ctrl & SPD_XFR_WRITE)
 		{
-			pxAssert(size <= SPD_DBUF_AVAIL_MAX * 512);
 			dev9.dma_iop_ptr = reinterpret_cast<u8*>(pMem);
 			dev9.dma_iop_size = size;
 			dev9.dma_iop_transfered = 0;

@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstring>
+#include <iterator>
 #include <map>
 
 #include "common/Assertions.h"
@@ -213,7 +214,21 @@ public:
 			}
 		} while (idx++ < last);
 
-		// TODO: remove links from this block?
+		for (linkiter_t i = links.begin(); i != links.end();)
+		{
+			bool stale = false;
+			for (int j = first; j <= last; j++)
+			{
+				const uptr fn = blocks[j].fnptr;
+				if (i->second >= fn && i->second < fn + blocks[j].x86size)
+				{
+					stale = true;
+					break;
+				}
+			}
+			i = stale ? links.erase(i) : std::next(i);
+		}
+
 		blocks.erase(first, last + 1);
 	}
 

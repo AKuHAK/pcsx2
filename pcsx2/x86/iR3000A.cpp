@@ -1052,7 +1052,7 @@ static __fi u32 psxRecClearMem(u32 pc)
 
 	pblock = PSX_GETBLOCK(pc);
 	// if ((u8*)iopJITCompile == pblock->GetFnptr())
-	if (pblock->GetFnptr() == (uptr)iopJITCompile)
+	if (pblock->GetFnptr() == (uptr)iopJITCompile || pblock == s_pCurBlock)
 		return 4;
 
 	pc = HWADDR(pc);
@@ -1065,6 +1065,8 @@ static __fi u32 psxRecClearMem(u32 pc)
 	{
 		if (pexblock->startpc + pexblock->size * 4 <= lowerextent)
 			break;
+		if (PSX_GETBLOCK(pexblock->startpc) == s_pCurBlock)
+			break;
 
 		lowerextent = std::min(lowerextent, pexblock->startpc);
 		blockidx--;
@@ -1075,6 +1077,8 @@ static __fi u32 psxRecClearMem(u32 pc)
 	while (BASEBLOCKEX* pexblock = recBlocks[blockidx])
 	{
 		if (pexblock->startpc >= upperextent)
+			break;
+		if (PSX_GETBLOCK(pexblock->startpc) == s_pCurBlock)
 			break;
 
 		lowerextent = std::min(lowerextent, pexblock->startpc);
