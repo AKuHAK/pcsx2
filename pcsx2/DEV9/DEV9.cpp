@@ -101,6 +101,7 @@ s32 DEV9init()
 	DEV9_LOG("DEV9: DEV9init");
 
 	memset(&dev9, 0, sizeof(dev9));
+	smap_clear_pending_dma();
 	dev9.ata = new ATA();
 	DEV9_LOG("DEV9: DEV9init2");
 
@@ -205,6 +206,7 @@ void DEV9close()
 	DEV9_LOG("DEV9: DEV9close");
 
 	dev9.dma_iop_ptr = nullptr;
+	smap_clear_pending_dma();
 	dev9.ata->Close();
 	TermNet();
 	isRunning = false;
@@ -1132,15 +1134,16 @@ void DEV9readDMA8Mem(u32* pMem, int size)
 	if (dev9.dma_ctrl & SPD_DMA_TO_SMAP)
 	{
 		smap_readDMA8Mem(pMem, size);
-		psxDMA8Interrupt();
 	}
 	else if (dev9.dma_ctrl & SPD_DMA_TO_DVRP)
 	{
+		smap_clear_pending_dma();
 		dvrp_readDMA8Mem(pMem, size);
 		psxDMA8Interrupt();
 	}
 	else
 	{
+		smap_clear_pending_dma();
 		if (!(dev9.xfr_ctrl & SPD_XFR_WRITE))
 		{
 			dev9.dma_iop_ptr = reinterpret_cast<u8*>(pMem);
@@ -1166,15 +1169,16 @@ void DEV9writeDMA8Mem(u32* pMem, int size)
 	if (dev9.dma_ctrl & SPD_DMA_TO_SMAP)
 	{
 		smap_writeDMA8Mem(pMem, size);
-		psxDMA8Interrupt();
 	}
 	else if (dev9.dma_ctrl & SPD_DMA_TO_DVRP)
 	{
+		smap_clear_pending_dma();
 		dvrp_writeDMA8Mem(pMem, size);
 		psxDMA8Interrupt();
 	}
 	else
 	{
+		smap_clear_pending_dma();
 		if (dev9.xfr_ctrl & SPD_XFR_WRITE)
 		{
 			dev9.dma_iop_ptr = reinterpret_cast<u8*>(pMem);

@@ -15,11 +15,26 @@
 #include "smap.h"
 #include "net.h"
 #include "pcap_io.h"
+#include "IopDma.h"
+#include "IopHw.h"
 
 bool has_link = true;
 volatile bool fireIntR = false;
 std::mutex frame_counter_mutex;
 std::mutex reset_mutex;
+
+static u32* smap_rx_dma_ptr = nullptr;
+static int smap_rx_dma_size = 0;
+static u32* smap_tx_dma_ptr = nullptr;
+static int smap_tx_dma_size = 0;
+
+void smap_clear_pending_dma()
+{
+	smap_rx_dma_ptr = nullptr;
+	smap_rx_dma_size = 0;
+	smap_tx_dma_ptr = nullptr;
+	smap_tx_dma_size = 0;
+}
 /*
 #define	SMAP_BASE			0xb0000000
 #define	SMAP_REG8(Offset)		(*(u8 volatile*)(SMAP_BASE+(Offset)))
@@ -568,9 +583,25 @@ void smap_write8(u32 addr, u8 value)
 				dev9Ru8(SMAP_R_TXFIFO_FRAME_CNT) = 0; //this actualy needs to be atomic (lock mov ...)
 				dev9Ru32(SMAP_R_TXFIFO_WR_PTR) = 0;
 				dev9Ru32(SMAP_R_TXFIFO_SIZE) = 16384;
+				smap_tx_dma_ptr = nullptr;
+				smap_tx_dma_size = 0;
 			}
 			value &= ~SMAP_TXFIFO_RESET;
 			dev9Ru8(addr) = value;
+			if ((value & SMAP_TXFIFO_DMAEN) && smap_tx_dma_ptr != nullptr)
+			{
+				u32* ptr = smap_tx_dma_ptr;
+				const int sz = smap_tx_dma_size;
+				smap_tx_dma_ptr = nullptr;
+				smap_tx_dma_size = 0;
+				if ((dev9.dma_ctrl & SPD_DMA_TO_SMAP) && (HW_DMA8_CHCR & 0x01000000))
+					smap_writeDMA8Mem(ptr, sz);
+			}
+			else if ((value & SMAP_TXFIFO_DMAEN) == 0)
+			{
+				smap_tx_dma_ptr = nullptr;
+				smap_tx_dma_size = 0;
+			}
 			return;
 
 		case SMAP_R_RXFIFO_CTRL:
@@ -583,9 +614,25 @@ void smap_write8(u32 addr, u8 value)
 				dev9Ru8(SMAP_R_RXFIFO_FRAME_CNT) = 0;
 				dev9Ru32(SMAP_R_RXFIFO_RD_PTR) = 0;
 				dev9Ru32(SMAP_R_RXFIFO_SIZE) = 16384;
+				smap_rx_dma_ptr = nullptr;
+				smap_rx_dma_size = 0;
 			}
 			value &= ~SMAP_RXFIFO_RESET;
 			dev9Ru8(addr) = value;
+			if ((value & SMAP_RXFIFO_DMAEN) && smap_rx_dma_ptr != nullptr)
+			{
+				u32* ptr = smap_rx_dma_ptr;
+				const int sz = smap_rx_dma_size;
+				smap_rx_dma_ptr = nullptr;
+				smap_rx_dma_size = 0;
+				if ((dev9.dma_ctrl & SPD_DMA_TO_SMAP) && (HW_DMA8_CHCR & 0x01000000))
+					smap_readDMA8Mem(ptr, sz);
+			}
+			else if ((value & SMAP_RXFIFO_DMAEN) == 0)
+			{
+				smap_rx_dma_ptr = nullptr;
+				smap_rx_dma_size = 0;
+			}
 			return;
 
 		case SMAP_R_BD_MODE:
@@ -677,6 +724,11 @@ void smap_write16(u32 addr, u16 value)
 		case SMAP_R_INTR_CLR:
 			//DevCon.WriteLn("DEV9: SMAP: SMAP_R_INTR_CLR 16bit write %x", value);
 			dev9.irqcause &= ~value;
+			return;
+
+		case SMAP_R_TXFIFO_CTRL:
+		case SMAP_R_RXFIFO_CTRL:
+			smap_write8(addr, static_cast<u8>(value));
 			return;
 
 		case SMAP_R_TXFIFO_WR_PTR:
@@ -804,10 +856,13 @@ void smap_write32(u32 addr, u32 value)
 	switch (addr)
 	{
 		case SMAP_R_TXFIFO_DATA:
+		{
 			//DevCon.WriteLn("DEV9: SMAP_R_TXFIFO_DATA 32bit write %x", value);
-			*((u32*)(dev9.txfifo + dev9Ru32(SMAP_R_TXFIFO_WR_PTR))) = value;
-			dev9Ru32(SMAP_R_TXFIFO_WR_PTR) = (dev9Ru32(SMAP_R_TXFIFO_WR_PTR) + 4) & 16383;
+			const u32 wr_ptr = dev9Ru32(SMAP_R_TXFIFO_WR_PTR) & 16383;
+			*((u32*)(dev9.txfifo + wr_ptr)) = value;
+			dev9Ru32(SMAP_R_TXFIFO_WR_PTR) = (wr_ptr + 4) & 16383;
 			return;
+		}
 		default:
 			DevCon.WriteLn("DEV9: SMAP : Unknown 32 bit write @ %X,v=%X", addr, value);
 			dev9Ru32(addr) = value;
@@ -819,6 +874,9 @@ void smap_readDMA8Mem(u32* pMem, int size)
 {
 	if (dev9Ru16(SMAP_R_RXFIFO_CTRL) & SMAP_RXFIFO_DMAEN)
 	{
+		smap_rx_dma_ptr = nullptr;
+		smap_rx_dma_size = 0;
+
 		dev9Ru32(SMAP_R_RXFIFO_RD_PTR) &= 16383;
 
 		DevCon.WriteLn("DEV9:  * * SMAP DMA READ START: rd_ptr=%d, wr_ptr=%d", dev9Ru32(SMAP_R_RXFIFO_RD_PTR), dev9.rxfifo_wr_ptr);
@@ -833,6 +891,12 @@ void smap_readDMA8Mem(u32* pMem, int size)
 		DevCon.WriteLn("DEV9:  * * SMAP DMA READ END:   rd_ptr=%d, wr_ptr=%d", dev9Ru32(SMAP_R_RXFIFO_RD_PTR), dev9.rxfifo_wr_ptr);
 
 		dev9Ru16(SMAP_R_RXFIFO_CTRL) &= ~SMAP_RXFIFO_DMAEN;
+		psxDMA8Interrupt();
+	}
+	else
+	{
+		smap_rx_dma_ptr = pMem;
+		smap_rx_dma_size = size;
 	}
 }
 
@@ -840,6 +904,9 @@ void smap_writeDMA8Mem(u32* pMem, int size)
 {
 	if (dev9Ru16(SMAP_R_TXFIFO_CTRL) & SMAP_TXFIFO_DMAEN)
 	{
+		smap_tx_dma_ptr = nullptr;
+		smap_tx_dma_size = 0;
+
 		dev9Ru32(SMAP_R_TXFIFO_WR_PTR) &= 16383;
 
 		DevCon.WriteLn("DEV9:  * * SMAP DMA WRITE START: wr_ptr=%d, rd_ptr=%d", dev9Ru32(SMAP_R_TXFIFO_WR_PTR), dev9.txfifo_rd_ptr);
@@ -856,6 +923,12 @@ void smap_writeDMA8Mem(u32* pMem, int size)
 		DevCon.WriteLn("DEV9:  * * SMAP DMA WRITE END:   wr_ptr=%d, rd_ptr=%d", dev9Ru32(SMAP_R_TXFIFO_WR_PTR), dev9.txfifo_rd_ptr);
 
 		dev9Ru16(SMAP_R_TXFIFO_CTRL) &= ~SMAP_TXFIFO_DMAEN;
+		psxDMA8Interrupt();
+	}
+	else
+	{
+		smap_tx_dma_ptr = pMem;
+		smap_tx_dma_size = size;
 	}
 }
 
