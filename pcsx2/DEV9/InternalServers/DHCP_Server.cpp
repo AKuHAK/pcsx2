@@ -278,10 +278,11 @@ namespace InternalServers
 		}
 
 		DHCP_Packet* retPay = new DHCP_Packet();
-		retPay->op = 2,
-		retPay->hardwareType = hType,
-		retPay->hardwareAddressLength = hLen,
-		retPay->transactionID = xID,
+		retPay->op = 2;
+		retPay->hardwareType = hType;
+		retPay->hardwareAddressLength = hLen;
+		retPay->transactionID = xID;
+		retPay->flags = dhcp.flags;
 
 		retPay->yourIP = ps2IP;
 		retPay->serverIP = NetAdapter::internalIP;
