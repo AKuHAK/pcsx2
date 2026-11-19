@@ -59,7 +59,7 @@ static __inline__ unsigned long long GetTickCount(void)
 #endif
 
 // clang-format off
-u8 eeprom[] = {
+u8 eeprom[128] = {
 	//0x6D, 0x76, 0x63, 0x61, 0x31, 0x30, 0x08, 0x01,
 	0x76, 0x6D, 0x61, 0x63, 0x30, 0x31, 0x07, 0x02,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -467,19 +467,10 @@ u16 SpeedRead(u32 addr, int width)
 				break;
 			}*/
 
-			if (dev9.eeprom_state == EEPROM_TDATA)
+			if (dev9.eeprom_state == EEPROM_TDATA && dev9.eeprom_command == 2) // read
 			{
-				if (dev9.eeprom_command == 2) // read
-				{
-					if (dev9.eeprom_bit != 0xFF)
-						hard = ((dev9.eeprom[dev9.eeprom_address] << dev9.eeprom_bit) & 0x8000) >> 11;
-					dev9.eeprom_bit++;
-					if (dev9.eeprom_bit == 16)
-					{
-						dev9.eeprom_address++;
-						dev9.eeprom_bit = 0;
-					}
-				}
+				if (dev9.eeprom_bit != 0xFF)
+					hard = ((dev9.eeprom[dev9.eeprom_address & 63] << dev9.eeprom_bit) & 0x8000) >> 11;
 			}
 			//DEV9_LOG("DEV9: SPD_R_PIO_DATA %dbit read %x", width, hard);
 			return hard;
@@ -577,22 +568,36 @@ void SpeedWrite(u32 addr, u16 value, int width)
 
 			if ((value & 0x30) == 0x20)
 			{
-				dev9.eeprom_state = 0;
+				dev9.eeprom_state = EEPROM_READY;
+				dev9Ru8(SPD_R_PIO_DATA) &= ~SPD_PP_SCLK;
 			}
 			dev9.eeprom_dir = (value >> 4) & 3;
 			return;
 
 		case SPD_R_PIO_DATA:
+		{
 			//DEV9_LOG("DEV9: SPD_R_PIO_DATA %dbit write %x", width, value);
+			const u8 prev = dev9Ru8(addr);
+			dev9Ru8(addr) = static_cast<u8>(value);
 
-			if ((value & 0xc0) != 0xc0)
+			if ((value & SPD_PP_CSEL) == 0)
+			{
+				dev9.eeprom_state = EEPROM_READY;
+				return;
+			}
+
+			// 93C46 clocks on the rising edge of SCLK (0 -> 1) while CSEL is high.
+			if (((prev & SPD_PP_SCLK) != 0) || ((value & SPD_PP_SCLK) == 0))
 				return;
 
 			switch (dev9.eeprom_state)
 			{
 				case EEPROM_READY:
-					dev9.eeprom_command = 0;
-					dev9.eeprom_state++;
+					if (value & SPD_PP_DIN)
+					{
+						dev9.eeprom_command = 0;
+						dev9.eeprom_state++;
+					}
 					break;
 				case EEPROM_OPCD0:
 					dev9.eeprom_command = (value >> 4) & 2;
@@ -609,23 +614,46 @@ void SpeedWrite(u32 addr, u16 value, int width)
 				case EEPROM_ADDR3:
 				case EEPROM_ADDR4:
 				case EEPROM_ADDR5:
+				{
+					const u8 bitMask = static_cast<u8>(0x20 >> (dev9.eeprom_state - EEPROM_ADDR0));
 					dev9.eeprom_address =
-						(dev9.eeprom_address & (63 ^ (1 << (dev9.eeprom_state - EEPROM_ADDR0)))) |
-						((value >> (dev9.eeprom_state - EEPROM_ADDR0)) & (0x20 >> (dev9.eeprom_state - EEPROM_ADDR0)));
+						(dev9.eeprom_address & static_cast<u8>(63 ^ bitMask)) |
+						((value & SPD_PP_DIN) ? bitMask : 0);
 					dev9.eeprom_state++;
 					break;
+				}
 				case EEPROM_TDATA:
 				{
 					if (dev9.eeprom_command == 1) // write
 					{
-						dev9.eeprom[dev9.eeprom_address] =
-							(dev9.eeprom[dev9.eeprom_address] & (63 ^ (1 << dev9.eeprom_bit))) |
-							((value >> dev9.eeprom_bit) & (0x8000 >> dev9.eeprom_bit));
+						if (dev9.eeprom_bit == 0xFF)
+							dev9.eeprom_bit = 0;
+						const u16 bitMask = static_cast<u16>(0x8000u >> dev9.eeprom_bit);
+						if (value & SPD_PP_DIN)
+							dev9.eeprom[dev9.eeprom_address & 63] |= bitMask;
+						else
+							dev9.eeprom[dev9.eeprom_address & 63] &= ~bitMask;
 						dev9.eeprom_bit++;
 						if (dev9.eeprom_bit == 16)
 						{
-							dev9.eeprom_address++;
+							dev9.eeprom_address = (dev9.eeprom_address + 1) & 63;
 							dev9.eeprom_bit = 0;
+						}
+					}
+					else if (dev9.eeprom_command == 2) // read
+					{
+						if (dev9.eeprom_bit == 0xFF)
+						{
+							dev9.eeprom_bit = 0;
+						}
+						else
+						{
+							dev9.eeprom_bit++;
+							if (dev9.eeprom_bit == 16)
+							{
+								dev9.eeprom_address = (dev9.eeprom_address + 1) & 63;
+								dev9.eeprom_bit = 0;
+							}
 						}
 					}
 					break;
@@ -635,6 +663,7 @@ void SpeedWrite(u32 addr, u16 value, int width)
 					break;
 			}
 			return;
+		}
 
 		case SPD_R_DMA_CTRL:
 			//DEV9_LOG("DEV9: SPD_R_IF_CTRL %dbit write %x", width, value);
