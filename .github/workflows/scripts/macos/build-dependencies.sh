@@ -11,10 +11,24 @@ fi
 # Users may want to use system ffmpeg for additional features
 : ${BUILD_FFMPEG:=1}
 
+# Target architecture: x86_64 (default, CI) or arm64 (native Apple Silicon build).
+: ${ARCH:=x86_64}
+case "$ARCH" in
+	x86_64) FFMPEG_ARCH_FLAGS=() ; PNG_ARCH_FLAGS=() ;;
+	arm64) FFMPEG_ARCH_FLAGS=(--disable-x86asm) ; PNG_ARCH_FLAGS=(-DPNG_ARM_NEON=on) ;;
+	*) echo "Unsupported ARCH=$ARCH (expected x86_64 or arm64)" ; exit 1 ;;
+esac
+
+# MoltenVK needs full Xcode (xcodebuild). Without it the Vulkan renderer is unavailable,
+# build PCSX2 with -DUSE_VULKAN=OFF (Metal renderer still works).
+if [ -z "$BUILD_MOLTENVK" ]; then
+	if xcrun -f xcodebuild >/dev/null 2>&1; then BUILD_MOLTENVK=1; else BUILD_MOLTENVK=0; fi
+fi
+
 export MACOSX_DEPLOYMENT_TARGET=11.0
 
 NPROCS="$(getconf _NPROCESSORS_ONLN)"
-SCRIPTDIR=$(realpath $(dirname "${BASH_SOURCE[0]}"))
+SCRIPTDIR="$(realpath "$(dirname "${BASH_SOURCE[0]}")")"
 INSTALLDIR="$1"
 if [ "${INSTALLDIR:0:1}" != "/" ]; then
 	INSTALLDIR="$PWD/$INSTALLDIR"
@@ -55,10 +69,14 @@ CMAKE_COMMON=(
 	-DCMAKE_SHARED_LINKER_FLAGS="-dead_strip -dead_strip_dylibs"
 	-DCMAKE_PREFIX_PATH="$INSTALLDIR"
 	-DCMAKE_INSTALL_PREFIX="$INSTALLDIR"
-	-DCMAKE_OSX_ARCHITECTURES="x86_64"
-	-DCMAKE_APPLE_SILICON_PROCESSOR="x86_64"
+	-DCMAKE_OSX_ARCHITECTURES="$ARCH"
+	-DCMAKE_APPLE_SILICON_PROCESSOR="$ARCH"
 	-DCMAKE_INSTALL_NAME_DIR='$<INSTALL_PREFIX>/lib'
 )
+if [ "$BUILD_MOLTENVK" -eq 0 ]; then
+	# Qt otherwise refuses to configure without Xcode (Command Line Tools only).
+	CMAKE_COMMON+=(-DQT_NO_APPLE_SDK_AND_XCODE_CHECK=ON)
+fi
 
 grep . > SHASUMS <<EOF
 231ad85979864d914dc9568a1b71c91d6cf20d7b2021d059103bf0eb51cb755e  qtbase-everywhere-src-$QT.tar.xz
@@ -137,7 +155,7 @@ if [ "$BUILD_FFMPEG" -ne 0 ]; then
 	cd "ffmpeg-$FFMPEG"
 	LDFLAGS="-dead_strip $LDFLAGS" CFLAGS="-Os $CFLAGS" CXXFLAGS="-Os $CXXFLAGS" \
 		./configure --prefix="$INSTALLDIR" \
-		--enable-cross-compile --arch=x86_64 --cc='clang -arch x86_64' --cxx='clang++ -arch x86_64' \
+		--enable-cross-compile --arch=$ARCH --cc="clang -arch $ARCH" --cxx="clang++ -arch $ARCH" "${FFMPEG_ARCH_FLAGS[@]}" \
 		--disable-all --disable-autodetect --disable-static --enable-shared \
 		--enable-avcodec --enable-avformat --enable-avutil --enable-swresample --enable-swscale \
 		--enable-audiotoolbox --enable-videotoolbox \
@@ -173,7 +191,7 @@ tar xf "libpng-$LIBPNG.tar.xz"
 gzip -kd -f "libpng-$LIBPNG-apng.patch.gz"
 cd "libpng-$LIBPNG"
 patch -p1 < "../libpng-$LIBPNG-apng.patch"
-cmake "${CMAKE_COMMON[@]}" -DBUILD_SHARED_LIBS=ON -DPNG_TESTS=OFF -DPNG_FRAMEWORK=OFF -B build
+cmake "${CMAKE_COMMON[@]}" -DBUILD_SHARED_LIBS=ON -DPNG_TESTS=OFF -DPNG_FRAMEWORK=OFF "${PNG_ARCH_FLAGS[@]}" -B build
 make -C build "-j$NPROCS"
 make -C build install
 cd ..
@@ -226,16 +244,20 @@ make -C build install
 cd ..
 
 # MoltenVK already builds universal binaries, nothing special to do here.
-echo "Installing MoltenVK..."
-rm -fr "MoltenVK-${MOLTENVK}"
-tar xf "v$MOLTENVK.tar.gz"
-cd "MoltenVK-${MOLTENVK}"
-sed -i '' 's/xcodebuild "$@"/xcodebuild $XCODEBUILD_EXTRA_ARGS "$@"/g' fetchDependencies
-sed -i '' 's/XCODEBUILD :=/XCODEBUILD ?=/g' Makefile
-XCODEBUILD_EXTRA_ARGS="VALID_ARCHS=x86_64" ./fetchDependencies --macos
-XCODEBUILD="set -o pipefail && xcodebuild VALID_ARCHS=x86_64" make macos MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=0 MVK_CONFIG_USE_METAL_PRIVATE_API=1
-cp Package/Latest/MoltenVK/dynamic/dylib/macOS/libMoltenVK.dylib "$INSTALLDIR/lib/"
-cd ..
+if [ "$BUILD_MOLTENVK" -ne 0 ]; then
+	echo "Installing MoltenVK..."
+	rm -fr "MoltenVK-${MOLTENVK}"
+	tar xf "v$MOLTENVK.tar.gz"
+	cd "MoltenVK-${MOLTENVK}"
+	sed -i '' 's/xcodebuild "$@"/xcodebuild $XCODEBUILD_EXTRA_ARGS "$@"/g' fetchDependencies
+	sed -i '' 's/XCODEBUILD :=/XCODEBUILD ?=/g' Makefile
+	XCODEBUILD_EXTRA_ARGS="VALID_ARCHS=$ARCH" ./fetchDependencies --macos
+	XCODEBUILD="set -o pipefail && xcodebuild VALID_ARCHS=$ARCH" make macos MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=0 MVK_CONFIG_USE_METAL_PRIVATE_API=1
+	cp Package/Latest/MoltenVK/dynamic/dylib/macOS/libMoltenVK.dylib "$INSTALLDIR/lib/"
+	cd ..
+else
+	echo "Skipping MoltenVK (no xcodebuild)."
+fi
 
 echo "Installing Qt Base..."
 rm -fr "qtbase-everywhere-src-$QT"
@@ -271,7 +293,7 @@ patch -u src/tools/macdeployqt/shared/shared.cpp <<EOF
  
      // Platforminputcontext plugins if QtGui is in use
 EOF
-cmake -B build "${CMAKE_COMMON[@]}" -DCMAKE_BUILD_TYPE=MinSizeRel -DFEATURE_dbus=OFF -DFEATURE_framework=OFF -DFEATURE_icu=OFF -DFEATURE_opengl=OFF -DFEATURE_sql=OFF -DFEATURE_gssapi=OFF -DFEATURE_system_png=ON -DFEATURE_system_jpeg=ON -DFEATURE_system_zlib=ON -DFEATURE_system_freetype=ON -DFEATURE_system_harfbuzz=ON
+cmake -B build "${CMAKE_COMMON[@]}" -DCMAKE_BUILD_TYPE=MinSizeRel -DFEATURE_dbus=OFF -DFEATURE_framework=OFF -DFEATURE_icu=OFF -DFEATURE_opengl=OFF -DFEATURE_sql=OFF -DFEATURE_gssapi=OFF -DFEATURE_system_png=ON -DFEATURE_system_jpeg=ON -DFEATURE_system_zlib=ON -DFEATURE_system_freetype=ON -DFEATURE_system_harfbuzz=ON -DFEATURE_dup3=OFF
 make -C build "-j$NPROCS"
 make -C build install
 cd ..
