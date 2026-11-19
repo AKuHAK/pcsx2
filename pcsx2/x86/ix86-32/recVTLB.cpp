@@ -257,11 +257,54 @@ static void DynGen_HandlerTest(const GenDirectFn& gen_direct, int mode, int bits
 		case 128: szidx = 4; break;
 		jNO_DEFAULT;
 	}
-	xForwardJS8 to_handler;
+
+	if (!g_eeMmuGuestActive)
+	{
+		xForwardJS8 to_handler;
+		gen_direct();
+		xForwardJump8 done;
+		to_handler.SetTarget();
+		xFastCall(GetIndirectDispatcherPtr(mode, szidx, sign));
+		done.SetTarget();
+		return;
+	}
+
+	// Guest-MMU synchronous exception path: on the cold handler branch, flush any
+	// dirty callee-saved registers, unflushed consts, exact faulting PC/delay-slot,
+	// and cycle count non-destructively so recCancelInstruction() leaves exact EE state.
+	xForwardJS32 to_handler;
 	gen_direct();
-	xForwardJump8 done;
+	xForwardJump32 done;
 	to_handler.SetTarget();
+
+	for (u32 i = 0; i < iREGCNT_GPR; i++)
+	{
+		if (x86regs[i].inuse && (x86regs[i].mode & MODE_WRITE) && x86regs[i].type != X86TYPE_TEMP)
+			_writebackX86Reg(i);
+	}
+	for (u32 i = 0; i < iREGCNT_XMM; i++)
+	{
+		if (xmmregs[i].inuse && (xmmregs[i].mode & MODE_WRITE))
+			_writebackXMMreg(i);
+	}
+	for (u32 r = 1; r < 32; r++)
+	{
+		if (GPR_IS_CONST1(r) && !(g_cpuFlushedConstReg & (1u << r)))
+			xWriteImm64ToMem(&cpuRegs.GPR.r[r].UD[0], r11, g_cpuConstRegs[r].UD[0]);
+	}
+
+	const u32 fault_pc = g_recompilingDelaySlot ? (pc + 4) : pc;
+	xMOV(ptr32[&cpuRegs.pc], fault_pc);
+	xMOV(ptr32[&cpuRegs.branch], g_recompilingDelaySlot ? 1u : 0u);
+	const u32 block_cycles = scaleblockcycles();
+	xADD(ptr64[&cpuRegs.cycle], block_cycles);
+
 	xFastCall(GetIndirectDispatcherPtr(mode, szidx, sign));
+
+	// Reached only when the handler did not raise an exception / cancel instruction.
+	xSUB(ptr64[&cpuRegs.cycle], block_cycles);
+	if (g_recompilingDelaySlot)
+		xMOV(ptr32[&cpuRegs.branch], 0);
 	done.SetTarget();
 }
 
@@ -450,6 +493,13 @@ int vtlb_DynGenReadNonQuad_Const(u32 bits, bool sign, bool xmm, u32 addr_const, 
 {
 	EE::Profiler.EmitConstMem(addr_const);
 
+	if (g_eeMmuGuestActive && (addr_const < 0x80000000u || addr_const >= 0xc0000000u))
+	{
+		_freeX86reg(arg1regd);
+		xMOV(arg1regd, addr_const);
+		return vtlb_DynGenReadNonQuad(bits, sign, xmm, arg1regd.GetId(), dest_reg_alloc);
+	}
+
 	int x86_dest_reg;
 	auto vmv = vtlbdata.vmap[addr_const >> VTLB_PAGE_BITS];
 	if (!vmv.isHandler(addr_const))
@@ -596,6 +646,13 @@ int vtlb_DynGenReadQuad_Const(u32 bits, u32 addr_const, vtlb_ReadRegAllocCallbac
 	pxAssert(bits == 128);
 
 	EE::Profiler.EmitConstMem(addr_const);
+
+	if (g_eeMmuGuestActive && (addr_const < 0x80000000u || addr_const >= 0xc0000000u))
+	{
+		_freeX86reg(arg1regd);
+		xMOV(arg1regd, addr_const);
+		return vtlb_DynGenReadQuad(bits, arg1regd.GetId(), dest_reg_alloc);
+	}
 
 	int reg;
 	auto vmv = vtlbdata.vmap[addr_const >> VTLB_PAGE_BITS];
@@ -801,6 +858,41 @@ void vtlb_DynGenWrite_Const(u32 bits, bool xmm, u32 addr_const, int value_reg)
 		xADD(rsp, 16 * 16);
 	}
 #endif
+
+	if (g_eeMmuGuestActive && (addr_const < 0x80000000u || addr_const >= 0xc0000000u))
+	{
+		iFlushCall(FLUSH_FULLVTLB);
+
+		const u32 sz = bits;
+		if (sz == 128)
+		{
+			pxAssert(xmm);
+			_freeXMMreg(xRegisterSSE::GetArgRegister(1, 0).GetId());
+			if (value_reg != xRegisterSSE::GetArgRegister(1, 0).GetId())
+				xMOVAPS(xRegisterSSE::GetArgRegister(1, 0), xRegisterSSE::GetInstance(value_reg));
+		}
+		else if (xmm)
+		{
+			pxAssert(sz == 32);
+			_freeX86reg(arg2regd);
+			xMOVD(arg2regd, xRegisterSSE(value_reg));
+		}
+		else
+		{
+			_freeX86reg(arg2regd);
+			if (value_reg != arg2reg.GetId())
+				xMOV(arg2reg, xRegister64(value_reg));
+		}
+
+		_freeX86reg(arg1regd);
+		xMOV(arg1regd, addr_const);
+		xMOV(eax, arg1regd);
+		xSHR(eax, VTLB_PAGE_BITS);
+		xMOV(rax, ptrNative[xComplexAddress(arg3reg, vtlbdata.vmap, rax * wordsize)]);
+		xADD(arg1reg, rax);
+		DynGen_HandlerTest([sz]() { DynGen_DirectWrite(sz); }, 1, sz);
+		return;
+	}
 
 	auto vmv = vtlbdata.vmap[addr_const >> VTLB_PAGE_BITS];
 	if (!vmv.isHandler(addr_const))

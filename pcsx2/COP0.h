@@ -7,6 +7,9 @@ struct tlbs;
 
 extern void WriteCP0Status(u32 value);
 extern void WriteCP0Config(u32 value);
+extern u32 ReadCP0Random();
+extern void WriteCP0EntryHi(u32 value);
+extern void cop0RebuildExecPAddrMap();
 extern void cpuUpdateOperationMode();
 extern void WriteTLB(int i);
 extern void UnmapTLB(const tlbs& t, int i);

@@ -256,11 +256,13 @@ static __fi bool EEINST_VIUSEDTEST(u32 reg)
 	return (g_pCurInstInfo->viregs[reg] & (EEINST_USED | EEINST_LASTUSE)) == EEINST_USED;
 }
 
+extern bool g_eeMmuGuestActive;
+
 /// Returns true if the value should be computed/written back.
 /// Basically, this means it's either used before it's overwritten, or not overwritten by the end of the block.
 static __fi bool EEINST_LIVETEST(u32 reg)
 {
-	return EE_WRITE_DEAD_VALUES || ((g_pCurInstInfo->regs[reg] & EEINST_LIVE) != 0);
+	return EE_WRITE_DEAD_VALUES || g_eeMmuGuestActive || ((g_pCurInstInfo->regs[reg] & EEINST_LIVE) != 0);
 }
 
 /// Returns true if the register can be renamed into another.
@@ -282,7 +284,7 @@ static __fi bool FPUINST_USEDTEST(u32 reg)
 /// Returns true if the value should be computed/written back.
 static __fi bool FPUINST_LIVETEST(u32 reg)
 {
-	return EE_WRITE_DEAD_VALUES || FPUINST_ISLIVE(reg);
+	return EE_WRITE_DEAD_VALUES || g_eeMmuGuestActive || FPUINST_ISLIVE(reg);
 }
 
 /// Returns true if the register can be renamed into another.

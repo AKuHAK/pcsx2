@@ -8,6 +8,7 @@
 //   suffice.
 
 #include "Common.h"
+#include "COP0.h"
 #include "R5900OpcodeTables.h"
 #include "iR5900.h"
 #include "iCOP0.h"
@@ -79,8 +80,24 @@ void recBC0TL()
 
 void recTLBR() { recCall(Interp::TLBR); }
 void recTLBP() { recCall(Interp::TLBP); }
-void recTLBWI() { recCall(Interp::TLBWI); }
-void recTLBWR() { recCall(Interp::TLBWR); }
+
+void recTLBWI()
+{
+	recCall(Interp::TLBWI);
+	if (!g_recompilingDelaySlot)
+		g_branch = 2;
+}
+
+void recTLBWR()
+{
+	iFlushCall(FLUSH_INTERPRETER);
+	xMOV(rax, ptr64[&cpuRegs.cycle]);
+	xADD(rax, scaleblockcycles_clear());
+	xMOV(ptr64[&cpuRegs.cycle], rax);
+	xFastCall((void*)Interp::TLBWR);
+	if (!g_recompilingDelaySlot)
+		g_branch = 2;
+}
 
 void recERET()
 {
@@ -154,6 +171,27 @@ void recMFC0()
 	if (!_Rt_)
 		return;
 
+	if (_Rd_ == 1)
+	{
+		iFlushCall(FLUSH_INTERPRETER);
+		xMOV(rax, ptr64[&cpuRegs.cycle]);
+		xADD(rax, scaleblockcycles_clear());
+		xMOV(ptr64[&cpuRegs.cycle], rax);
+		xFastCall((void*)ReadCP0Random);
+
+		const int regt = _allocX86reg(X86TYPE_GPR, _Rt_, MODE_WRITE);
+		xMOVSX(xRegister64(regt), ptr32[&cpuRegs.CP0.n.Random]);
+		return;
+	}
+	else if (_Rd_ == 12)
+	{
+		const int regt = _allocX86reg(X86TYPE_GPR, _Rt_, MODE_WRITE);
+		xMOV(xRegister32(regt), ptr32[&cpuRegs.CP0.r[12]]);
+		xAND(xRegister32(regt), 0xf0c79c1f);
+		xMOVSX(xRegister64(regt), xRegister32(regt));
+		return;
+	}
+
 	if (_Rd_ == 25)
 	{
 		if (0 == (_Imm_ & 1)) // MFPS, register value ignored
@@ -202,12 +240,26 @@ void recMTC0()
 	{
 		switch (_Rd_)
 		{
+			case 6:
+				xMOV(ptr32[&cpuRegs.CP0.n.Wired], g_cpuConstRegs[_Rt_].UL[0]);
+				xMOV(ptr32[&cpuRegs.CP0.n.Random], 47);
+				break;
+
+			case 10:
+				iFlushCall(FLUSH_INTERPRETER);
+				xFastCall((void*)WriteCP0EntryHi, g_cpuConstRegs[_Rt_].UL[0]);
+				if (!g_recompilingDelaySlot)
+					g_branch = 2;
+				break;
+
 			case 12:
 				iFlushCall(FLUSH_INTERPRETER);
 				xMOV(rax, ptr64[&cpuRegs.cycle]);
 				xADD(rax, scaleblockcycles_clear());
 				xMOV(ptr64[&cpuRegs.cycle], rax); // update cycles
 				xFastCall((void*)WriteCP0Status, g_cpuConstRegs[_Rt_].UL[0]);
+				if (!g_recompilingDelaySlot && g_eeMmuGuestActive)
+					g_branch = 2;
 				break;
 
 			case 16:
@@ -268,6 +320,18 @@ void recMTC0()
 	{
 		switch (_Rd_)
 		{
+			case 6:
+				_eeMoveGPRtoM((uptr)&cpuRegs.CP0.n.Wired, _Rt_);
+				xMOV(ptr32[&cpuRegs.CP0.n.Random], 47);
+				break;
+
+			case 10:
+				iFlushCall(FLUSH_INTERPRETER);
+				xFastCall((void*)WriteCP0EntryHi, ptr32[&cpuRegs.GPR.r[_Rt_].UL[0]]);
+				if (!g_recompilingDelaySlot)
+					g_branch = 2;
+				break;
+
 			case 12:
 				_eeMoveGPRtoR(arg1reg, _Rt_);
 				iFlushCall(FLUSH_INTERPRETER);
@@ -275,6 +339,8 @@ void recMTC0()
 				xADD(rax, scaleblockcycles_clear());
 				xMOV(ptr64[&cpuRegs.cycle], rax); // update cycles
 				xFastCall((void*)WriteCP0Status);
+				if (!g_recompilingDelaySlot && g_eeMmuGuestActive)
+					g_branch = 2;
 				break;
 
 			case 16:

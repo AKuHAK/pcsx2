@@ -93,6 +93,11 @@ u32 s_nEndBlock = 0; // what pc the current block ends
 u32 s_branchTo;
 static bool s_nBlockFF;
 
+alignas(16) static u32 s_physPageVAddr[Ps2MemSize::TotalRam >> 12];
+static u32 s_curBlockStartVpc = 0;
+static u32 s_curBlockStartPpc = 0;
+static bool s_curBlockIsVirtual = false;
+
 // save states for branches
 GPR_reg64 s_saveConstRegs[32];
 static u32 s_saveHasConstReg = 0, s_saveFlushedConstReg = 0;
@@ -102,7 +107,7 @@ static u32 s_savenBlockCycles = 0;
 
 static void iBranchTest(u32 newpc = 0xffffffff);
 static void ClearRecLUT(BASEBLOCK* base, int count);
-static u32 scaleblockcycles();
+u32 scaleblockcycles();
 static void recExitExecution();
 
 #ifdef TRACE_BLOCKS
@@ -346,9 +351,94 @@ void recCall(void (*func)())
 // =====================================================================================================
 
 static void recRecompile(const u32 startpc);
+static void recRecompileAt(const u32 startpc, const u32 p_startpc, const bool is_virtual);
+static uptr recDispatchVirtual();
+void recClear(u32 addr, u32 size);
 static void dyna_block_discard(u32 start, u32 sz);
 static void dyna_page_reset(u32 start, u32 sz);
 static void recError(u32 error);
+
+static __fi BASEBLOCK* recGetPhysBlock(u32 paddr)
+{
+	if (paddr < Ps2MemSize::ExposedRam)
+		return &recRAM[paddr >> 2];
+	if (paddr >= 0x1fc00000u && paddr < 0x1fc00000u + Ps2MemSize::Rom)
+		return &recROM[(paddr - 0x1fc00000u) >> 2];
+	if (paddr >= 0x1e000000u && paddr < 0x1e000000u + Ps2MemSize::Rom1)
+		return &recROM1[(paddr - 0x1e000000u) >> 2];
+	if (paddr >= 0x1e400000u && paddr < 0x1e400000u + Ps2MemSize::Rom2)
+		return &recROM2[(paddr - 0x1e400000u) >> 2];
+	return PC_GETBLOCK(paddr);
+}
+
+static __fi void* recFetchPtr(u32 vaddr)
+{
+	if (s_curBlockIsVirtual)
+		return &eeMem->Main[(s_curBlockStartPpc & ~0xfffu) | (vaddr & 0xfffu)];
+	if (vaddr >= 0x80000000u && vaddr < 0xc0000000u && (vaddr & 0x1fffffffu) < Ps2MemSize::ExposedRam)
+		return &eeMem->Main[vaddr & 0x1fffffffu];
+	return PSM(vaddr);
+}
+
+static __fi u32 recReadCodeAt(u32 vaddr)
+{
+	return s_curBlockIsVirtual ? *(const u32*)recFetchPtr(vaddr) : memRead32(vaddr);
+}
+
+static bool recHasDelaySlot(u32 code)
+{
+	const u32 op = code >> 26;
+	switch (op)
+	{
+		case 0: // SPECIAL: JR, JALR
+			return (code & 0x3fu) == 8 || (code & 0x3fu) == 9;
+		case 1: // REGIMM branches
+		{
+			const u32 rt = (code >> 16) & 0x1fu;
+			return rt < 4 || (rt >= 16 && rt < 20);
+		}
+		case 2: // J
+		case 3: // JAL
+		case 4: // BEQ
+		case 5: // BNE
+		case 6: // BLEZ
+		case 7: // BGTZ
+		case 20: // BEQL
+		case 21: // BNEL
+		case 22: // BLEZL
+		case 23: // BGTZL
+			return true;
+		case 16: // COP0
+		case 17: // COP1
+		case 18: // COP2
+			return ((code >> 21) & 0x1fu) == 8;
+		default:
+			return false;
+	}
+}
+
+static void recRaiseJumpAdEL()
+{
+	cpuRegs.CP0.n.BadVAddr = cpuRegs.pc;
+	cpuException(EXC_CODE_AdEL, 0);
+}
+
+static bool recTryGetStaticLinkPhys(u32 target_vpc, u32* out_phys)
+{
+	if (!g_eeMmuGuestActive || (target_vpc >= 0x80000000u && target_vpc < 0xc0000000u))
+	{
+		*out_phys = HWADDR(target_vpc);
+		return true;
+	}
+
+	if (s_curBlockIsVirtual && ((target_vpc & ~0xfffu) == (s_curBlockStartVpc & ~0xfffu)) && ((target_vpc & 0xfffu) != 0xffcu))
+	{
+		*out_phys = (s_curBlockStartPpc & ~0xfffu) | (target_vpc & 0xfffu);
+		return true;
+	}
+
+	return false;
+}
 
 static const void* DispatcherEvent = nullptr;
 static const void* DispatcherReg = nullptr;
@@ -471,7 +561,15 @@ static const void* _DynGen_DispatchPageReset()
 static const void* _DynGen_UnmappedRecLUTPage()
 {
 	u8* retval = xGetPtr();
-	xFastCall((const void*)recError, 0);
+	if (g_eeMmuGuestActive)
+	{
+		xFastCall((const void*)recDispatchVirtual);
+		xJMP(rax);
+	}
+	else
+	{
+		xFastCall((const void*)recError, 0);
+	}
 	return retval;
 }
 
@@ -515,10 +613,99 @@ static void recError(u32 error)
 	recExitExecution();
 }
 
+static uptr recDispatchVirtual()
+{
+	const u32 v_pc = cpuRegs.pc;
+	if ((v_pc & 3) != 0)
+	{
+		cpuRegs.CP0.n.BadVAddr = v_pc;
+		cpuException(EXC_CODE_AdEL, 0);
+		return (uptr)DispatcherReg;
+	}
+
+	u32 p_pc = 0;
+	if (!vtlb_LookupExecPAddr(v_pc, &p_pc))
+	{
+		cpuRegs.pc = v_pc + 4;
+		cpuTlbMissR(v_pc, 0);
+		return (uptr)DispatcherReg;
+	}
+
+	if (p_pc >= Ps2MemSize::ExposedRam || ((v_pc & 0xfffu) == 0xffcu && recHasDelaySlot(*(const u32*)&eeMem->Main[p_pc])))
+	{
+		intCpu.Step();
+		if (eeRecExitRequested || eeRecNeedsReset)
+		{
+			eeRecExitRequested = false;
+			recExitExecution();
+		}
+		return (uptr)DispatcherReg;
+	}
+
+	const u32 p_page = p_pc >> 12;
+	const u32 v_page = v_pc & ~0xfffu;
+	if (s_physPageVAddr[p_page] != v_page)
+	{
+		recClear(p_page << 12, 0x400);
+		s_physPageVAddr[p_page] = v_page;
+	}
+
+	if (recRAM[p_pc >> 2].GetFnptr() == (uptr)JITCompile)
+		recRecompileAt(v_pc, p_pc, true);
+
+	return recRAM[p_pc >> 2].GetFnptr();
+}
+
 static __ri void ClearRecLUT(BASEBLOCK* base, int memsize)
 {
 	for (int i = 0; i < memsize / 4; i++)
 		base[i].SetFnptr((uptr)JITCompile);
+}
+
+static void recInitLUTs()
+{
+	BASEBLOCK* unmapped = recLutUnmapped.data();
+	for (int i = 0; i < 0x10000; i++)
+		recLUT_SetPage(recLUT, hwLUT, unmapped, i, 0, 0);
+
+	for (int i = 0x0000; i < (int)(Ps2MemSize::ExposedRam / 0x10000); i++)
+	{
+		recLUT_SetPage(recLUT, hwLUT, recRAM, 0x8000, i, i);
+		recLUT_SetPage(recLUT, hwLUT, recRAM, 0xa000, i, i);
+		if (!g_eeMmuGuestActive)
+		{
+			recLUT_SetPage(recLUT, hwLUT, recRAM, 0x0000, i, i);
+			recLUT_SetPage(recLUT, hwLUT, recRAM, 0x2000, i, i);
+			recLUT_SetPage(recLUT, hwLUT, recRAM, 0x3000, i, i);
+			recLUT_SetPage(recLUT, hwLUT, recRAM, 0xb000, i, i);
+			recLUT_SetPage(recLUT, hwLUT, recRAM, 0xc000, i, i);
+			recLUT_SetPage(recLUT, hwLUT, recRAM, 0xd000, i, i);
+		}
+	}
+
+	for (int i = 0x1fc0; i < 0x2000; i++)
+	{
+		recLUT_SetPage(recLUT, hwLUT, recROM, 0x8000, i, i - 0x1fc0);
+		recLUT_SetPage(recLUT, hwLUT, recROM, 0xa000, i, i - 0x1fc0);
+		if (!g_eeMmuGuestActive)
+			recLUT_SetPage(recLUT, hwLUT, recROM, 0x0000, i, i - 0x1fc0);
+	}
+
+	for (int i = 0x1e00; i < 0x1e40; i++)
+	{
+		recLUT_SetPage(recLUT, hwLUT, recROM1, 0x8000, i, i - 0x1e00);
+		recLUT_SetPage(recLUT, hwLUT, recROM1, 0xa000, i, i - 0x1e00);
+		if (!g_eeMmuGuestActive)
+			recLUT_SetPage(recLUT, hwLUT, recROM1, 0x0000, i, i - 0x1e00);
+	}
+
+	for (int i = 0x1e40; i < 0x1e80; i++)
+	{
+		recLUT_SetPage(recLUT, hwLUT, recROM2, 0x8000, i, i - 0x1e40);
+		recLUT_SetPage(recLUT, hwLUT, recROM2, 0xa000, i, i - 0x1e40);
+		if (!g_eeMmuGuestActive)
+			recLUT_SetPage(recLUT, hwLUT, recROM2, 0x0000, i, i - 0x1e40);
+	}
 }
 
 static void recReserveRAM()
@@ -545,44 +732,7 @@ static void recReserveRAM()
 	recROM2 = basepos;
 	basepos += (Ps2MemSize::Rom2 / 4);
 
-	BASEBLOCK* unmapped = recLutUnmapped.data();
-	for (int i = 0; i < 0x10000; i++)
-	{
-		recLUT_SetPage(recLUT, hwLUT, unmapped, i, 0, 0);
-	}
-
-	for (int i = 0x0000; i < (int)(Ps2MemSize::ExposedRam / 0x10000); i++)
-	{
-		recLUT_SetPage(recLUT, hwLUT, recRAM, 0x0000, i, i);
-		recLUT_SetPage(recLUT, hwLUT, recRAM, 0x2000, i, i);
-		recLUT_SetPage(recLUT, hwLUT, recRAM, 0x3000, i, i);
-		recLUT_SetPage(recLUT, hwLUT, recRAM, 0x8000, i, i);
-		recLUT_SetPage(recLUT, hwLUT, recRAM, 0xa000, i, i);
-		recLUT_SetPage(recLUT, hwLUT, recRAM, 0xb000, i, i);
-		recLUT_SetPage(recLUT, hwLUT, recRAM, 0xc000, i, i);
-		recLUT_SetPage(recLUT, hwLUT, recRAM, 0xd000, i, i);
-	}
-
-	for (int i = 0x1fc0; i < 0x2000; i++)
-	{
-		recLUT_SetPage(recLUT, hwLUT, recROM, 0x0000, i, i - 0x1fc0);
-		recLUT_SetPage(recLUT, hwLUT, recROM, 0x8000, i, i - 0x1fc0);
-		recLUT_SetPage(recLUT, hwLUT, recROM, 0xa000, i, i - 0x1fc0);
-	}
-
-	for (int i = 0x1e00; i < 0x1e40; i++)
-	{
-		recLUT_SetPage(recLUT, hwLUT, recROM1, 0x0000, i, i - 0x1e00);
-		recLUT_SetPage(recLUT, hwLUT, recROM1, 0x8000, i, i - 0x1e00);
-		recLUT_SetPage(recLUT, hwLUT, recROM1, 0xa000, i, i - 0x1e00);
-	}
-
-	for (int i = 0x1e40; i < 0x1e80; i++)
-	{
-		recLUT_SetPage(recLUT, hwLUT, recROM2, 0x0000, i, i - 0x1e40);
-		recLUT_SetPage(recLUT, hwLUT, recROM2, 0x8000, i, i - 0x1e40);
-		recLUT_SetPage(recLUT, hwLUT, recROM2, 0xa000, i, i - 0x1e40);
-	}
+	recInitLUTs();
 }
 
 static void recReserve()
@@ -626,7 +776,9 @@ static void recResetRaw()
 	for (int i = 0; i < _64kb / 4; i++)
 		recLutUnmapped.data()[i].SetFnptr((uptr)UnmappedRecLUTPage);
 
+	recInitLUTs();
 	recRAMCopy.fill(0);
+	memset(s_physPageVAddr, 0xFF, sizeof(s_physPageVAddr));
 
 	maxrecmem = 0;
 
@@ -709,29 +861,31 @@ static void recResetEE()
 
 static void recCancelInstruction()
 {
-	pxFailRel("recCancelInstruction() called, this should never happen!");
+	fastjmp_jmp(&m_SetJmp_StateCheck, 2);
 }
 
 static void recExecute()
 {
-	// Reset before we try to execute any code, if there's one pending.
-	// We need to do this here, because if we reset while we're executing, it sets the "needs reset"
-	// flag, which triggers a JIT exit (the fastjmp_set below), and eventually loops back here.
-	if (eeRecNeedsReset)
+	// setjmp will save the register context and will return 0.
+	// Return value 1 exits execution; return value 2 cancels the current
+	// instruction after a synchronous exception and re-enters at the new PC.
+	for (;;)
 	{
-		eeRecNeedsReset = false;
-		recResetRaw();
-	}
+		// Reset before we try to execute any code, if there's one pending.
+		if (eeRecNeedsReset)
+		{
+			eeRecNeedsReset = false;
+			recResetRaw();
+		}
 
-	// setjmp will save the register context and will return 0
-	// A call to longjmp will restore the context (included the eip/rip)
-	// but will return the longjmp 2nd parameter (here 1)
-	if (!fastjmp_set(&m_SetJmp_StateCheck))
-	{
+		const int jmp = fastjmp_set(&m_SetJmp_StateCheck);
+		if (jmp == 1)
+			break;
+		if (jmp == 2)
+			continue;
+
 		eeCpuExecuting = true;
 		((void (*)())EnterRecompiledCode)();
-
-		// Generally unreachable code here ...
 	}
 
 	eeCpuExecuting = false;
@@ -743,7 +897,7 @@ static void recExecute()
 void R5900::Dynarec::OpcodeImpl::recSYSCALL()
 {
 	EE::Profiler.EmitOp(eeOpcode::SYSCALL);
-	if (GPR_IS_CONST1(3))
+	if (!g_eeMmuGuestActive && GPR_IS_CONST1(3))
 	{
 		// If it's FlushCache or iFlushCache, we can skip it since we don't support cache in the JIT.
 		if (g_cpuConstRegs[3].UC[0] == 0x64 || g_cpuConstRegs[3].UC[0] == 0x68)
@@ -770,9 +924,26 @@ void R5900::Dynarec::OpcodeImpl::recBREAK()
 // Size is in dwords (4 bytes)
 void recClear(u32 addr, u32 size)
 {
-	if ((addr) >= maxrecmem || !(recLUT[(addr) >> 16] + (addr & ~0xFFFFUL)))
-		return;
-	addr = HWADDR(addr);
+	if (g_eeMmuGuestActive)
+	{
+		if (addr < Ps2MemSize::ExposedRam)
+		{
+			if (addr >= maxrecmem)
+				return;
+		}
+		else
+		{
+			if ((addr) >= maxrecmem || !(recLUT[(addr) >> 16] + (addr & ~0xFFFFUL)))
+				return;
+			addr = HWADDR(addr);
+		}
+	}
+	else
+	{
+		if ((addr) >= maxrecmem || !(recLUT[(addr) >> 16] + (addr & ~0xFFFFUL)))
+			return;
+		addr = HWADDR(addr);
+	}
 
 	int blockidx = recBlocks.LastIndex(addr + size * 4 - 4);
 
@@ -791,7 +962,7 @@ void recClear(u32 addr, u32 size)
 	{
 		u32 blockstart = pexblock->startpc;
 		u32 blockend = pexblock->startpc + pexblock->size * 4;
-		BASEBLOCK* pblock = PC_GETBLOCK(blockstart);
+		BASEBLOCK* pblock = recGetPhysBlock(blockstart);
 
 		if (pblock == s_pCurBlock)
 		{
@@ -825,7 +996,7 @@ void recClear(u32 addr, u32 size)
 
 	for (int i = 0; (pexblock = recBlocks[i]); i++)
 	{
-		if (s_pCurBlock == PC_GETBLOCK(pexblock->startpc))
+		if (s_pCurBlock == recGetPhysBlock(pexblock->startpc))
 			continue;
 		u32 blockend = pexblock->startpc + pexblock->size * 4;
 		if ((pexblock->startpc >= addr && pexblock->startpc < addr + size * 4) || (pexblock->startpc < addr && blockend > addr)) [[unlikely]]
@@ -836,7 +1007,7 @@ void recClear(u32 addr, u32 size)
 	}
 
 	if (upperextent > lowerextent)
-		ClearRecLUT(PC_GETBLOCK(lowerextent), upperextent - lowerextent);
+		ClearRecLUT(recGetPhysBlock(lowerextent), upperextent - lowerextent);
 }
 
 
@@ -850,6 +1021,18 @@ void SetBranchReg()
 	g_branch = 1;
 
 	xMOV(ptr32[&cpuRegs.pc], eax);
+
+	if (g_eeMmuGuestActive)
+	{
+		iFlushCall(FLUSH_EVERYTHING);
+		xTEST(ptr32[&cpuRegs.pc], 3);
+		xForwardJNZ32 unaligned;
+		iBranchTest();
+		unaligned.SetTarget();
+		xFastCall((const void*)recRaiseJumpAdEL);
+		xJMP(DispatcherReg);
+		return;
+	}
 
 	// Test for jump to unaligned, only needed for register branches
 	//  since unaligned targets can't be encoded with imm
@@ -904,7 +1087,10 @@ bool TrySwapDelaySlot(u32 rs, u32 rt, u32 rd, bool allow_loadstore)
 	if (g_recompilingDelaySlot)
 		return false;
 
-	const u32 opcode_encoded = *(u32*)PSM(pc);
+	if (g_eeMmuGuestActive)
+		allow_loadstore = false;
+
+	const u32 opcode_encoded = *(u32*)recFetchPtr(pc);
 	if (opcode_encoded == 0)
 	{
 		recompileNextInstruction(true, true);
@@ -975,6 +1161,8 @@ bool TrySwapDelaySlot(u32 rs, u32 rt, u32 rd, bool allow_loadstore)
 		case 54: // LQC2
 		case 62: // SQC2
 			// fprintf(stderr, "SWAPPING coprocessor load delay slot (block %08X) %08X %s\n", s_pCurBlockEx->startpc, pc, disasm.c_str());
+			if (!allow_loadstore)
+				goto is_unsafe;
 			break;
 
 		case 0: // SPECIAL
@@ -1045,6 +1233,8 @@ bool TrySwapDelaySlot(u32 rs, u32 rt, u32 rd, bool allow_loadstore)
 
 				case 4: // MTC0
 				case 6: // CTC0
+					if (g_eeMmuGuestActive)
+						goto is_unsafe;
 					break;
 
 				case 16: // TLB (technically would be safe, but we don't use it anyway)
@@ -1274,7 +1464,7 @@ static u32 scaleblockcycles_calculation()
 	return (scale_cycles < 1) ? 1 : scale_cycles;
 }
 
-static u32 scaleblockcycles()
+u32 scaleblockcycles()
 {
 	const u32 scaled = scaleblockcycles_calculation();
 
@@ -1368,10 +1558,11 @@ static void iBranchTest(u32 newpc)
 		xMOV(ptr64[&cpuRegs.cycle], rax); // update cycles
 		xSUB(rax, ptr64[&cpuRegs.nextEventCycle]);
 
-		if (newpc == 0xffffffff)
+		u32 link_phys = 0;
+		if (newpc == 0xffffffff || !recTryGetStaticLinkPhys(newpc, &link_phys))
 			xJS(DispatcherReg);
 		else
-			recBlocks.Link(HWADDR(newpc), xJcc32(Jcc_Signed));
+			recBlocks.Link(link_phys, xJcc32(Jcc_Signed));
 
 		xJMP((void*)DispatcherEvent);
 	}
@@ -1622,7 +1813,7 @@ bool encodeMemcheck()
 	if (needed == 0)
 		return false;
 
-	const u32 op = memRead32(needed == 2 ? pc + 4 : pc);
+	const u32 op = recReadCodeAt(needed == 2 ? pc + 4 : pc);
 	const OPCODE& opcode = GetInstruction(op);
 
 	const bool store = (opcode.flags & IS_STORE) != 0;
@@ -1670,7 +1861,7 @@ void recompileNextInstruction(bool delayslot, bool swapped_delay_slot)
 		_clearNeededXMMregs();
 	}
 
-	s_pCode = (int*)PSM(pc);
+	s_pCode = (int*)recFetchPtr(pc);
 	pxAssert(s_pCode);
 
 #if 0
@@ -1863,7 +2054,7 @@ void recompileNextInstruction(bool delayslot, bool swapped_delay_slot)
 			int cycles = COP2DivUnitTimings(cpuRegs.code);
 			for (u32 p = pc; cycles > 0 && p < s_nEndBlock; p += 4, cycles--)
 			{
-				cpuRegs.code = memRead32(p);
+				cpuRegs.code = recReadCodeAt(p);
 
 				if ((_Opcode_ == 022) && (cpuRegs.code & 0x7FC) == 0x3BC) // WaitQ or another DIV op hit (stalled), we're safe
 					break;
@@ -1871,13 +2062,14 @@ void recompileNextInstruction(bool delayslot, bool swapped_delay_slot)
 				else if (COP2IsQOP(cpuRegs.code))
 				{
 					Console.Warning("Possible incorrect Q value used in COP2. If the game is broken, please report to https://github.com/pcsx2/pcsx2.");
-					for (u32 i = s_pCurBlockEx->startpc; i < s_nEndBlock; i += 4)
+					for (u32 i = s_curBlockStartVpc; i < s_nEndBlock; i += 4)
 					{
 						std::string disasm = "";
-						disR5900Fasm(disasm, memRead32(i), i, false);
+						const u32 insn = recReadCodeAt(i);
+						disR5900Fasm(disasm, insn, i, false);
 						Console.Warning("%x %s%08X %s", i, i == pc - 4 ? "*" : i == p ? "=" :
 																						" ",
-							memRead32(i), disasm.c_str());
+							insn, disasm.c_str());
 					}
 					break;
 				}
@@ -1890,20 +2082,21 @@ void recompileNextInstruction(bool delayslot, bool swapped_delay_slot)
 			for (u32 p = pc; s != 0 && p < s_nEndBlock && all_count < 10 && cop2m_count < 5 && cop2o_count < 4; p += 4)
 			{
 				// I am so sorry.
-				cpuRegs.code = memRead32(p);
+				cpuRegs.code = recReadCodeAt(p);
 				if (_Opcode_ == 022 && _Rs_ == 2) // CFC2
 					// rd is fs
 					if ((_Rd_ == 16 && s & 1) || (_Rd_ == 17 && s & 2) || (_Rd_ == 18 && s & 4))
 					{
 						std::string disasm;
 						Console.Warning("Possible old value used in COP2 code. If the game is broken, please report to https://github.com/pcsx2/pcsx2.");
-						for (u32 i = s_pCurBlockEx->startpc; i < s_nEndBlock; i += 4)
+						for (u32 i = s_curBlockStartVpc; i < s_nEndBlock; i += 4)
 						{
 							disasm = "";
-							disR5900Fasm(disasm, memRead32(i), i, false);
+							const u32 insn = recReadCodeAt(i);
+							disR5900Fasm(disasm, insn, i, false);
 							Console.Warning("%x %s%08X %s", i, i == pc - 4 ? "*" : i == p ? "=" :
 																							" ",
-								memRead32(i), disasm.c_str());
+								insn, disasm.c_str());
 						}
 						break;
 					}
@@ -2003,14 +2196,14 @@ void dyna_page_reset(u32 start, u32 sz)
 	mmap_MarkCountedRamPage(start);
 }
 
-static void memory_protect_recompiled_code(u32 startpc, u32 size)
+static void memory_protect_recompiled_code(u32 p_startpc, u32 size)
 {
-	u32 inpage_ptr = HWADDR(startpc);
+	u32 inpage_ptr = p_startpc;
 	const u32 inpage_sz = size * 4;
 
 	// The kernel context register is stored @ 0x800010C0-0x80001300
 	// The EENULL thread context register is stored @ 0x81000-....
-	const bool contains_thread_stack = ((startpc >> 12) == 0x81) || ((startpc >> 12) == 0x80001);
+	const bool contains_thread_stack = !g_eeMmuGuestActive && (((p_startpc >> 12) == 0x81) || ((p_startpc >> 12) == 0x80001));
 
 	// note: blocks are guaranteed to reside within the confines of a single page.
 	const vtlb_ProtectionMode PageType = contains_thread_stack ? ProtMode_Manual : mmap_GetRamPageInfo(inpage_ptr);
@@ -2036,7 +2229,8 @@ static void memory_protect_recompiled_code(u32 startpc, u32 size)
 
 			while (stg > 0)
 			{
-				xCMP(ptr32[PSM(lpc)], *(u32*)PSM(lpc));
+				u32* code_ptr = (lpc < Ps2MemSize::ExposedRam) ? reinterpret_cast<u32*>(&eeMem->Main[lpc]) : reinterpret_cast<u32*>(PSM(lpc));
+				xCMP(ptr32[code_ptr], *code_ptr);
 				xJNE(DispatchBlockDiscard);
 
 				stg -= 4;
@@ -2074,12 +2268,12 @@ static void memory_protect_recompiled_code(u32 startpc, u32 size)
 
 				// note: clearcnt is measured per-page, not per-block!
 				eeRecPerfLog.Write("Manual block @ %08X : size =%3d  page/offs = 0x%05X/0x%03X  inpgsz = %d  clearcnt = %d",
-					startpc, size, inpage_ptr >> 12, inpage_ptr & 0xfff, inpage_sz, manual_counter[inpage_ptr >> 12]);
+					p_startpc, size, inpage_ptr >> 12, inpage_ptr & 0xfff, inpage_sz, manual_counter[inpage_ptr >> 12]);
 			}
 			else
 			{
 				eeRecPerfLog.Write("Uncounted Manual block @ 0x%08X : size =%3d page/offs = 0x%05X/0x%03X  inpgsz = %d",
-					startpc, size, inpage_ptr >> 12, inpage_ptr & 0xfff, inpage_sz);
+					p_startpc, size, inpage_ptr >> 12, inpage_ptr & 0xfff, inpage_sz);
 			}
 			break;
 	}
@@ -2158,6 +2352,32 @@ static bool recSkipTimeoutLoop(s32 reg, bool is_timeout_loop)
 
 static void recRecompile(const u32 startpc)
 {
+	if (g_eeMmuGuestActive && (startpc < 0x80000000u || startpc >= 0xc0000000u))
+	{
+		u32 p_pc = 0;
+		if (!vtlb_LookupExecPAddr(startpc, &p_pc) || p_pc >= Ps2MemSize::ExposedRam)
+			return;
+		if ((startpc & 0xfffu) == 0xffcu && recHasDelaySlot(*(const u32*)&eeMem->Main[p_pc]))
+			return;
+
+		const u32 p_page = p_pc >> 12;
+		const u32 v_page = startpc & ~0xfffu;
+		if (s_physPageVAddr[p_page] != v_page)
+		{
+			recClear(p_page << 12, 0x400);
+			s_physPageVAddr[p_page] = v_page;
+		}
+
+		if (recRAM[p_pc >> 2].GetFnptr() == (uptr)JITCompile)
+			recRecompileAt(startpc, p_pc, true);
+		return;
+	}
+
+	recRecompileAt(startpc, HWADDR(startpc), false);
+}
+
+static void recRecompileAt(const u32 startpc, const u32 p_startpc, const bool is_virtual)
+{
 	u32 i = 0;
 	u32 willbranch3 = 0;
 
@@ -2167,7 +2387,7 @@ static void recRecompile(const u32 startpc)
 	if (recPtr >= recPtrEnd)
 		eeRecNeedsReset = true;
 
-	if (HWADDR(startpc) == VMManager::Internal::GetCurrentELFEntryPoint())
+	if (!is_virtual && p_startpc == VMManager::Internal::GetCurrentELFEntryPoint())
 		VMManager::Internal::EntryPointCompilingOnCPUThread();
 
 	if (eeRecNeedsReset)
@@ -2176,22 +2396,37 @@ static void recRecompile(const u32 startpc)
 		recResetRaw();
 	}
 
+	if (g_eeMmuGuestActive && p_startpc < Ps2MemSize::ExposedRam)
+	{
+		const u32 p_page = p_startpc >> 12;
+		const u32 v_page = startpc & ~0xfffu;
+		if (s_physPageVAddr[p_page] != v_page)
+		{
+			recClear(p_page << 12, 0x400);
+			s_physPageVAddr[p_page] = v_page;
+		}
+	}
+
+	s_curBlockStartVpc = startpc;
+	s_curBlockStartPpc = p_startpc;
+	s_curBlockIsVirtual = is_virtual;
+
 	xSetTextPtr(R5900_TEXTPTR);
 	xSetPtr(recPtr);
 	recPtr = xGetAlignedCallTarget();
 
-	s_pCurBlock = PC_GETBLOCK(startpc);
+	s_pCurBlock = recGetPhysBlock(p_startpc);
 
 	pxAssert(s_pCurBlock->GetFnptr() == (uptr)JITCompile);
 
-	s_pCurBlockEx = recBlocks.Get(HWADDR(startpc));
-	pxAssert(!s_pCurBlockEx || s_pCurBlockEx->startpc != HWADDR(startpc));
+	s_pCurBlockEx = recBlocks.Get(p_startpc);
+	pxAssert(!s_pCurBlockEx || s_pCurBlockEx->startpc != p_startpc);
 
-	s_pCurBlockEx = recBlocks.New(HWADDR(startpc), (uptr)recPtr);
+	s_pCurBlockEx = recBlocks.New(p_startpc, (uptr)recPtr);
 
 	pxAssert(s_pCurBlockEx);
 
-	if (HWADDR(startpc) == EELOAD_START)
+	if (!is_virtual && p_startpc == EELOAD_START)
 	{
 		// The EELOAD _start function is the same across all BIOS versions
 		const u32 mainjump = memRead32(EELOAD_START + 0x9c);
@@ -2199,7 +2434,7 @@ static void recRecompile(const u32 startpc)
 			g_eeloadMain = ((EELOAD_START + 0xa0) & 0xf0000000U) | (mainjump << 2 & 0x0fffffffU);
 	}
 
-	if (g_eeloadMain && HWADDR(startpc) == HWADDR(g_eeloadMain))
+	if (!is_virtual && g_eeloadMain && p_startpc == HWADDR(g_eeloadMain))
 	{
 		xFastCall((void*)eeloadHook);
 		if (VMManager::Internal::IsFastBootInProgress())
@@ -2219,7 +2454,7 @@ static void recRecompile(const u32 startpc)
 		}
 	}
 
-	if (g_eeloadExec && HWADDR(startpc) == HWADDR(g_eeloadExec))
+	if (!is_virtual && g_eeloadExec && p_startpc == HWADDR(g_eeloadExec))
 		xFastCall((void*)eeloadHook2);
 
 	g_branch = 0;
@@ -2277,7 +2512,7 @@ static void recRecompile(const u32 startpc)
 	// of decrementing, so we'll limit the test to that to be safe.
 	//
 	s32 timeout_reg = -1;
-	bool is_timeout_loop = true;
+	bool is_timeout_loop = !is_virtual;
 
 	// compile breakpoints as individual blocks
 	const int n1 = isBreakpointNeeded(i);
@@ -2291,15 +2526,6 @@ static void recRecompile(const u32 startpc)
 
 	while (1)
 	{
-		BASEBLOCK* pblock = PC_GETBLOCK(i);
-
-		// stop before breakpoints
-		if (isBreakpointNeeded(i) != 0 || isMemcheckNeeded(i) != 0)
-		{
-			s_nEndBlock = i;
-			break;
-		}
-
 		if (i != startpc) // Block size truncation checks.
 		{
 			if ((i & 0xffc) == 0x0) // breaks blocks at 4k page boundaries
@@ -2311,6 +2537,24 @@ static void recRecompile(const u32 startpc)
 				break;
 			}
 
+			//HUH ? PSM ? whut ? THIS IS VIRTUAL ACCESS GOD DAMMIT
+			cpuRegs.code = *(int*)recFetchPtr(i);
+
+			if (is_virtual && (i & 0xfffu) == 0xffcu && recHasDelaySlot(cpuRegs.code))
+			{
+				willbranch3 = 1;
+				s_nEndBlock = i;
+				break;
+			}
+
+			// stop before breakpoints
+			if (isBreakpointNeeded(i) != 0 || isMemcheckNeeded(i) != 0)
+			{
+				s_nEndBlock = i;
+				break;
+			}
+
+			BASEBLOCK* pblock = recGetPhysBlock(p_startpc + (i - startpc));
 			if (pblock->GetFnptr() != (uptr)JITCompile)
 			{
 				willbranch3 = 1;
@@ -2318,9 +2562,11 @@ static void recRecompile(const u32 startpc)
 				break;
 			}
 		}
-
-		//HUH ? PSM ? whut ? THIS IS VIRTUAL ACCESS GOD DAMMIT
-		cpuRegs.code = *(int*)PSM(i);
+		else
+		{
+			//HUH ? PSM ? whut ? THIS IS VIRTUAL ACCESS GOD DAMMIT
+			cpuRegs.code = *(int*)recFetchPtr(i);
+		}
 
 		if (is_timeout_loop)
 		{
@@ -2436,7 +2682,7 @@ StartRecomp:
 	// which alter the machine state apart from registers, it will do the same thing on every
 	// iteration.
 	s_nBlockFF = false;
-	if (s_branchTo == startpc)
+	if (!is_virtual && s_branchTo == startpc)
 	{
 		s_nBlockFF = true;
 
@@ -2446,7 +2692,7 @@ StartRecomp:
 		{
 			if (i == s_nEndBlock - 8)
 				continue;
-			cpuRegs.code = *(u32*)PSM(i);
+			cpuRegs.code = *(u32*)recFetchPtr(i);
 			// nop
 			if (cpuRegs.code == 0)
 				continue;
@@ -2535,7 +2781,7 @@ StartRecomp:
 
 		for (i = s_nEndBlock; i > startpc; i -= 4)
 		{
-			cpuRegs.code = *(int*)PSM(i - 4);
+			cpuRegs.code = *(int*)recFetchPtr(i - 4);
 			pcur[-1] = pcur[0];
 			recBackpropBSC(cpuRegs.code, pcur - 1, pcur);
 			pcur--;
@@ -2573,10 +2819,10 @@ StartRecomp:
 #endif
 
 	// Detect and handle self-modified code
-	memory_protect_recompiled_code(startpc, (s_nEndBlock - startpc) >> 2);
+	memory_protect_recompiled_code(p_startpc, (s_nEndBlock - startpc) >> 2);
 
 	// Skip Recompilation if sceMpegIsEnd Pattern detected
-	const bool doRecompilation = !skipMPEG_By_Pattern(startpc) && !recSkipTimeoutLoop(timeout_reg, is_timeout_loop);
+	const bool doRecompilation = !(!is_virtual && skipMPEG_By_Pattern(startpc)) && !recSkipTimeoutLoop(timeout_reg, is_timeout_loop);
 
 	if (doRecompilation)
 	{
@@ -2633,37 +2879,40 @@ StartRecomp:
 	pxAssert((pc - startpc) >> 2 <= 0xffff);
 	s_pCurBlockEx->size = (pc - startpc) >> 2;
 
-	if (HWADDR(pc) <= Ps2MemSize::ExposedRam)
+	const u32 p_end = p_startpc + (pc - startpc);
+	if (p_end <= Ps2MemSize::ExposedRam)
 	{
 		BASEBLOCKEX* oldBlock;
 		int i;
 
-		i = recBlocks.LastIndex(HWADDR(pc) - 4);
+		i = recBlocks.LastIndex(p_end - 4);
 		while ((oldBlock = recBlocks[i--]))
 		{
 			if (oldBlock == s_pCurBlockEx)
 				continue;
-			if (oldBlock->startpc >= HWADDR(pc))
+			if (oldBlock->startpc >= p_end)
 				continue;
-			if ((oldBlock->startpc + oldBlock->size * 4) <= HWADDR(startpc))
+			if ((oldBlock->startpc + oldBlock->size * 4) <= p_startpc)
 				break;
 
-			if (memcmp(&recRAMCopy[oldBlock->startpc / 4], PSM(oldBlock->startpc),
+			if (memcmp(&recRAMCopy[oldBlock->startpc / 4], &eeMem->Main[oldBlock->startpc],
 					oldBlock->size * 4))
 			{
-				recClear(startpc, (pc - startpc) / 4);
-				s_pCurBlockEx = recBlocks.Get(HWADDR(startpc));
-				pxAssert(s_pCurBlockEx->startpc == HWADDR(startpc));
+				recClear(p_startpc, (pc - startpc) / 4);
+				s_pCurBlockEx = recBlocks.Get(p_startpc);
+				pxAssert(s_pCurBlockEx->startpc == p_startpc);
 				break;
 			}
 		}
 
-		memcpy(&recRAMCopy[HWADDR(startpc) / 4], PSM(startpc), pc - startpc);
+		memcpy(&recRAMCopy[p_startpc / 4], &eeMem->Main[p_startpc], pc - startpc);
 	}
 
 	s_pCurBlock->SetFnptr((uptr)recPtr);
 
-	if (!(pc & 0x10000000))
+	if (p_startpc < Ps2MemSize::ExposedRam)
+		maxrecmem = std::max(p_end, maxrecmem);
+	else if (!(pc & 0x10000000))
 		maxrecmem = std::max((pc & ~0xa0000000), maxrecmem);
 
 	if (g_branch == 2)
@@ -2700,7 +2949,11 @@ StartRecomp:
 			{
 				xMOV(ptr32[&cpuRegs.pc], pc);
 				xADD(ptr64[&cpuRegs.cycle], scaleblockcycles());
-				recBlocks.Link(HWADDR(pc), xJcc32());
+				u32 link_phys = 0;
+				if (recTryGetStaticLinkPhys(pc, &link_phys))
+					recBlocks.Link(link_phys, xJcc32());
+				else
+					xJMP(DispatcherReg);
 			}
 		}
 	}
@@ -2723,6 +2976,7 @@ StartRecomp:
 
 	s_pCurBlock = nullptr;
 	s_pCurBlockEx = nullptr;
+	s_curBlockIsVirtual = false;
 }
 
 R5900cpu recCpu = {

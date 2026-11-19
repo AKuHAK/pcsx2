@@ -70,8 +70,12 @@ extern void vtlb_DynV2P();
 //virtual mappings
 extern void vtlb_VMap(u32 vaddr,u32 paddr,u32 sz);
 extern void vtlb_VMapBuffer(u32 vaddr,void* buffer,u32 sz);
-extern void vtlb_VMapWriteProtected(u32 vaddr,u32 sz);
+extern void vtlb_VMapWriteProtected(u32 vaddr,u32 paddr,u32 sz);
 extern void vtlb_VMapUnmap(u32 vaddr,u32 sz);
+extern void vtlb_EnableGuestMmu();
+extern void vtlb_DisableGuestMmu();
+extern void vtlb_SetExecPAddr(u32 vaddr, u32 paddr, u32 size);
+extern bool vtlb_LookupExecPAddr(u32 vaddr, u32* out_paddr);
 extern bool vtlb_ResolveFastmemMapping(uptr* addr);
 extern bool vtlb_GetGuestAddress(uptr host_addr, u32* guest_addr);
 extern void vtlb_UpdateFastmemProtection(u32 paddr, u32 size, PageProtectionMode prot);

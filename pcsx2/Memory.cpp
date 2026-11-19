@@ -984,9 +984,9 @@ void memSetPageAddr(u32 vaddr, u32 paddr)
 
 }
 
-void memSetPageAddrReadOnly(u32 vaddr)
+void memSetPageAddrReadOnly(u32 vaddr, u32 paddr)
 {
-	vtlb_VMapWriteProtected(vaddr, 0x1000);
+	vtlb_VMapWriteProtected(vaddr, paddr, 0x1000);
 }
 
 void memClearPageAddr(u32 vaddr)

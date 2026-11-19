@@ -3,6 +3,7 @@
 
 #include "Common.h"
 #include "COP0.h"
+#include "vtlb.h"
 
 // Updates the CPU's mode of operation (either, Kernel, Supervisor, or User modes).
 // kuseg is unmapped when Status.ERL=1 (EE Core User's Manual Fig. 5-1, note 3),
@@ -274,8 +275,9 @@ void MapTLB(const tlbs& t, int i)
 					if (t.EntryLo0.D)
 						memSetPageAddr(addr << 12, t.PFN0() + ((addr - saddr) << 12));
 					else
-						memSetPageAddrReadOnly(addr << 12);
-					Cpu->Clear(addr << 12, 0x400);
+						memSetPageAddrReadOnly(addr << 12, t.PFN0() + ((addr - saddr) << 12));
+					if (!g_eeMmuGuestActive)
+						Cpu->Clear(addr << 12, 0x400);
 				}
 			}
 		}
@@ -293,8 +295,9 @@ void MapTLB(const tlbs& t, int i)
 					if (t.EntryLo1.D)
 						memSetPageAddr(addr << 12, t.PFN1() + ((addr - saddr) << 12));
 					else
-						memSetPageAddrReadOnly(addr << 12);
-					Cpu->Clear(addr << 12, 0x400);
+						memSetPageAddrReadOnly(addr << 12, t.PFN1() + ((addr - saddr) << 12));
+					if (!g_eeMmuGuestActive)
+						Cpu->Clear(addr << 12, 0x400);
 				}
 			}
 		}
@@ -335,7 +338,8 @@ void UnmapTLB(const tlbs& t, int i)
 			if ((addr & mask) == ((t.VPN2() >> 12) & mask))
 			{ //match
 				memClearPageAddr(addr << 12);
-				Cpu->Clear(addr << 12, 0x400);
+				if (!g_eeMmuGuestActive)
+					Cpu->Clear(addr << 12, 0x400);
 			}
 		}
 	}
@@ -351,7 +355,8 @@ void UnmapTLB(const tlbs& t, int i)
 			if ((addr & mask) == ((t.VPN2() >> 12) & mask))
 			{ //match
 				memClearPageAddr(addr << 12);
-				Cpu->Clear(addr << 12, 0x400);
+				if (!g_eeMmuGuestActive)
+					Cpu->Clear(addr << 12, 0x400);
 			}
 		}
 	}
@@ -410,11 +415,14 @@ void WriteTLB(int i)
 	}
 
 	MapTLB(tlb[i], i);
+
+	if (cpuRegs.CP0.n.Status.b.ERL == 0 && cpuRegs.CP0.n.Status.b.BEV == 0 && !tlb[i].isSPR() &&
+		((tlb[i].Mask() == 0 && ((tlb[i].EntryLo0.V && !tlb[i].EntryLo0.D && tlb[i].PFN0() < Ps2MemSize::ExposedRam) ||
+								 (tlb[i].EntryLo1.V && !tlb[i].EntryLo1.D && tlb[i].PFN1() < Ps2MemSize::ExposedRam))) ||
+		 (tlb[i].VPN2() >= 0xc0000000u && tlb[i].VPN2() < 0xffff8000u && (tlb[i].EntryLo0.V || tlb[i].EntryLo1.V))))
+		cpuSetMmuGuestActive();
 }
 
-namespace R5900 {
-namespace Interpreter {
-namespace OpcodeImpl {
 static u32 cop0Random()
 {
 	const u32 wired = cpuRegs.CP0.n.Wired & 0x3f;
@@ -425,6 +433,77 @@ static u32 cop0Random()
 	return 47 - static_cast<u32>(cpuRegs.cycle % (48 - wired));
 }
 
+u32 ReadCP0Random()
+{
+	cpuRegs.CP0.n.Random = cop0Random();
+	return cpuRegs.CP0.n.Random;
+}
+
+void WriteCP0EntryHi(u32 value)
+{
+	// EntryHi carries the ASID, so writing it can switch address space.
+	// Tear the old one out before building the new one.
+	const u32 newASID = value & 0xff;
+
+	cpuRegs.CP0.n.EntryHi = value;
+
+	if (newASID != tlbInstalledASID)
+	{
+		for (int t = 0; t < 48; t++)
+			UnmapTLB(tlb[t], t);
+
+		tlbInstalledASID = newASID;
+
+		for (int t = 0; t < 48; t++)
+			MapTLB(tlb[t], t);
+	}
+
+	if (newASID != 0)
+		cpuSetMmuGuestActive();
+}
+
+void cop0RebuildExecPAddrMap()
+{
+	if (cpuRegs.CP0.n.Status.b.ERL != 0)
+	{
+		vtlb_SetExecPAddr(0x00000000, 0x00000000, 0x20000000);
+		return;
+	}
+
+	for (int i = 0; i < 48; i++)
+	{
+		const tlbs& t = tlb[i];
+		if (!tlbSlotIsInstalled(t) || t.isSPR())
+			continue;
+
+		const u32 mask = ((~t.Mask()) << 1) & 0xfffff;
+		if (t.EntryLo0.V)
+		{
+			const u32 saddr = t.VPN2() >> 12;
+			const u32 eaddr = saddr + t.Mask() + 1;
+			for (u32 addr = saddr; addr < eaddr; addr++)
+			{
+				if ((addr & mask) == ((t.VPN2() >> 12) & mask))
+					vtlb_SetExecPAddr(addr << 12, t.PFN0() + ((addr - saddr) << 12), 0x1000);
+			}
+		}
+
+		if (t.EntryLo1.V)
+		{
+			const u32 saddr = (t.VPN2() >> 12) + t.Mask() + 1;
+			const u32 eaddr = saddr + t.Mask() + 1;
+			for (u32 addr = saddr; addr < eaddr; addr++)
+			{
+				if ((addr & mask) == ((t.VPN2() >> 12) & mask))
+					vtlb_SetExecPAddr(addr << 12, t.PFN1() + ((addr - saddr) << 12), 0x1000);
+			}
+		}
+	}
+}
+
+namespace R5900 {
+namespace Interpreter {
+namespace OpcodeImpl {
 namespace COP0 {
 
 	void TLBR()
@@ -465,8 +544,11 @@ namespace COP0 {
 			cpuRegs.CP0.n.Index, cpuRegs.CP0.n.PageMask, cpuRegs.CP0.n.EntryHi,
 			cpuRegs.CP0.n.EntryLo0, cpuRegs.CP0.n.EntryLo1);
 
+		const bool unmapped_low_tlb = (cpuRegs.CP0.n.Status.b.ERL == 0 && cpuRegs.CP0.n.Status.b.BEV == 0) && !tlb[j].isSPR() && tlb[j].VPN2() < 0x02000000u && (tlb[j].EntryLo0.V || tlb[j].EntryLo1.V);
 		UnmapTLB(tlb[j], j);
 		WriteTLB(j);
+		if (unmapped_low_tlb && !(tlb[j].EntryLo0.V || tlb[j].EntryLo1.V) && tlb[j].EntryHi.UL >= 0x80000000u && tlb[j].EntryHi.UL < 0xc0000000u)
+			cpuSetMmuGuestActive();
 	}
 
 	void TLBWR()
@@ -487,6 +569,7 @@ namespace COP0 {
 
 		UnmapTLB(tlb[j], j);
 		WriteTLB(j);
+		cpuSetMmuGuestActive();
 	}
 
 	void TLBP()
@@ -585,25 +668,8 @@ cpuRegs.PERF.n.pccr, cpuRegs.PERF.n.pcr0, cpuRegs.PERF.n.pcr1, _Imm_ & 0x3F);*/
 				break;
 
 			case 10:
-			{
-				// EntryHi carries the ASID, so writing it can switch address space.
-				// Tear the old one out before building the new one.
-				const u32 newASID = cpuRegs.GPR.r[_Rt_].UL[0] & 0xff;
-
-				cpuRegs.CP0.n.EntryHi = cpuRegs.GPR.r[_Rt_].UL[0];
-
-				if (newASID != tlbInstalledASID)
-				{
-					for (int t = 0; t < 48; t++)
-						UnmapTLB(tlb[t], t);
-
-					tlbInstalledASID = newASID;
-
-					for (int t = 0; t < 48; t++)
-						MapTLB(tlb[t], t);
-				}
+				WriteCP0EntryHi(cpuRegs.GPR.r[_Rt_].UL[0]);
 				break;
-			}
 
 			case 12:
 				WriteCP0Status(cpuRegs.GPR.r[_Rt_].UL[0]);

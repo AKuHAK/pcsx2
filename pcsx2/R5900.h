@@ -397,6 +397,8 @@ extern uint intcInterrupt();
 extern uint dmacInterrupt();
 
 extern void cpuReset();
+extern bool g_eeMmuGuestActive;
+extern void cpuSetMmuGuestActive();
 extern void cpuException(u32 code, u32 bd);
 // Raised when the guest stores to a page it mapped with EntryLo.D clear.
 extern void cpuTlbModified(u32 addr, u32 bd);

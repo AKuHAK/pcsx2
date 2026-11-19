@@ -9,6 +9,7 @@
 #include "R3000A.h"
 #include "ps2/pgif.h" // pgif init
 #include "VUmicro.h"
+#include "vtlb.h"
 #include "COP0.h"
 #include "MTVU.h"
 #include "VMManager.h"
@@ -43,6 +44,7 @@ R5900cpu *Cpu = NULL;
 static constexpr uint eeWaitCycles = 3072;
 
 bool eeEventTestIsActive = false;
+bool g_eeMmuGuestActive = false;
 EE_intProcessStatus eeRunInterruptScan = INT_NOT_RUNNING;
 
 u32 g_eeloadMain = 0, g_eeloadExec = 0, g_osdsys_str = 0;
@@ -56,8 +58,25 @@ const int kMaxArgs = 16;
 uptr g_argPtrs[kMaxArgs];
 #define DEBUG_LAUNCHARG 0 // show lots of helpful console messages as the launch arguments are passed to the game
 
+void cpuSetMmuGuestActive()
+{
+	if (g_eeMmuGuestActive)
+		return;
+
+	Console.WriteLn("EE: Guest MMU active, switching to virtual-aware EE execution.");
+	g_eeMmuGuestActive = true;
+	vtlb_EnableGuestMmu();
+	cop0RebuildExecPAddrMap();
+	mmap_ResetBlockTracking();
+	if (Cpu)
+		Cpu->Reset();
+}
+
 void cpuReset()
 {
+	const bool was_mmu_guest = g_eeMmuGuestActive;
+	g_eeMmuGuestActive = false;
+
 	std::memset(&cpuRegs, 0, sizeof(cpuRegs));
 	std::memset(&fpuRegs, 0, sizeof(fpuRegs));
 	std::memset(&tlb, 0, sizeof(tlb));
@@ -92,6 +111,14 @@ void cpuReset()
 	g_osdsys_str = 0;
 
 	CBreakPoints::ClearSkipFirst();
+
+	if (was_mmu_guest)
+	{
+		vtlb_DisableGuestMmu();
+		if (Cpu)
+			Cpu->Reset();
+		vtlb_ResetFastmem();
+	}
 }
 
 static bool eeTlbInvalidMatch = false;
@@ -196,8 +223,8 @@ void cpuTlbMiss(u32 addr, u32 bd, u32 excode)
 	// is what the match is against.
 	eeTlbInvalidMatch = eeTlbMatches(addr);
 
-	// Avoid too much spamming on the interpreter
-	if (Cpu != &intCpu || IsDebugBuild) {
+	// Avoid too much spamming on the interpreter or guest-MMU OS execution
+	if (!g_eeMmuGuestActive && (Cpu != &intCpu || IsDebugBuild)) {
 		Console.Error("cpuTlbMiss pc:%x, cycl:%llx, addr: %x, status=%x, code=%x",
 				cpuRegs.pc, cpuRegs.cycle, addr, cpuRegs.CP0.n.Status.val, excode);
 	}
@@ -827,7 +854,7 @@ int isBreakpointNeeded(u32 addr)
 		bpFlags += 1;
 
 	// there may be a breakpoint in the delay slot
-	if (isBranchOrJump(addr) && CBreakPoints::IsAddressBreakPoint(BREAKPOINT_EE, addr+4))
+	if (CBreakPoints::IsAddressBreakPoint(BREAKPOINT_EE, addr + 4) && isBranchOrJump(addr))
 		bpFlags += 2;
 
 	return bpFlags;

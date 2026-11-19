@@ -56,6 +56,10 @@ static vtlbHandler UnmappedVirtHandler;
 static vtlbHandler WriteProtectedVirtHandler;
 static vtlbHandler UnmappedPhyHandler;
 
+// Fast virtual-to-physical execution lookup table (including read-only EntryLo.D==0 pages)
+// when guest-managed MMU mode is active; nullptr otherwise.
+static u32* s_execPAddr = nullptr;
+
 struct FastmemVirtualMapping
 {
 	u32 offset;
@@ -518,7 +522,7 @@ static __ri void vtlb_Miss(u32 addr, u32 mode)
 		GoemonTlbMissDebug();
 
 	// Hack to handle expected tlb miss by some games.
-	if (Cpu == &intCpu)
+	if (Cpu == &intCpu || g_eeMmuGuestActive)
 	{
 		if (mode)
 			cpuTlbMissW(addr, cpuRegs.branch);
@@ -579,7 +583,7 @@ static void TAKES_R128 vtlbUnmappedVWriteLg(u32 addr, r128 data) { vtlb_Miss(add
 // itself.
 static __ri void vtlb_Modified(u32 addr)
 {
-	if (Cpu == &intCpu)
+	if (Cpu == &intCpu || g_eeMmuGuestActive)
 	{
 		cpuTlbModified(addr, cpuRegs.branch);
 		Cpu->CancelInstruction();
@@ -595,6 +599,18 @@ static __ri void vtlb_Modified(u32 addr)
 // address, which the exception needs; the physical side is resolved here.
 static void* vtlb_WriteProtectedSource(u32 vaddr)
 {
+	if (s_execPAddr)
+	{
+		const u32 pbase = s_execPAddr[vaddr >> VTLB_PAGE_BITS];
+		if (pbase == 0xFFFFFFFFu)
+			return nullptr;
+
+		const u32 paddr = pbase | (vaddr & VTLB_PAGE_MASK);
+		if (!eeMem || (paddr + 16) > Ps2MemSize::ExposedRam)
+			return nullptr;
+
+		return &eeMem->Main[paddr];
+	}
 	for (int i = 0; i < 48; i++)
 	{
 		const u32 pageSize = (tlb[i].Mask() + 1) << 12;
@@ -1205,6 +1221,52 @@ bool vtlb_IsFaultingPC(u32 guest_pc)
 	return (s_fastmem_faulting_pcs.find(guest_pc) != s_fastmem_faulting_pcs.end());
 }
 
+void vtlb_EnableGuestMmu()
+{
+	if (!s_execPAddr)
+		s_execPAddr = new u32[VTLB_VMAP_ITEMS];
+
+	std::memset(s_execPAddr, 0xFF, sizeof(u32) * VTLB_VMAP_ITEMS);
+	vtlb_RemoveFastmemMappings();
+}
+
+void vtlb_DisableGuestMmu()
+{
+	delete[] s_execPAddr;
+	s_execPAddr = nullptr;
+}
+
+void vtlb_SetExecPAddr(u32 vaddr, u32 paddr, u32 size)
+{
+	if (!s_execPAddr)
+		return;
+
+	verify(0 == (vaddr & VTLB_PAGE_MASK));
+	verify(0 == (paddr & VTLB_PAGE_MASK));
+	verify(0 == (size & VTLB_PAGE_MASK) && size > 0);
+
+	while (size > 0)
+	{
+		s_execPAddr[vaddr >> VTLB_PAGE_BITS] = (paddr >= VTLB_PMAP_SZ) ? 0xFFFFFFFFu : (paddr & ~VTLB_PAGE_MASK);
+		vaddr += VTLB_PAGE_SIZE;
+		paddr += VTLB_PAGE_SIZE;
+		size -= VTLB_PAGE_SIZE;
+	}
+}
+
+bool vtlb_LookupExecPAddr(u32 vaddr, u32* out_paddr)
+{
+	if (!s_execPAddr)
+		return false;
+
+	const u32 pbase = s_execPAddr[vaddr >> VTLB_PAGE_BITS];
+	if (pbase == 0xFFFFFFFFu)
+		return false;
+
+	*out_paddr = pbase | (vaddr & VTLB_PAGE_MASK);
+	return true;
+}
+
 //virtual mappings
 //TODO: Add invalid paddr checks
 void vtlb_VMap(u32 vaddr, u32 paddr, u32 size)
@@ -1239,6 +1301,8 @@ void vtlb_VMap(u32 vaddr, u32 paddr, u32 size)
 			vmv = VTLBVirtual(vtlbdata.pmap[paddr >> VTLB_PAGE_BITS], paddr, vaddr);
 
 		vtlbdata.vmap[vaddr >> VTLB_PAGE_BITS] = vmv;
+		if (s_execPAddr)
+			s_execPAddr[vaddr >> VTLB_PAGE_BITS] = (paddr >= VTLB_PMAP_SZ) ? 0xFFFFFFFFu : (paddr & ~VTLB_PAGE_MASK);
 		if (vtlbdata.ppmap)
 		{
 			if (!(vaddr & 0x80000000)) // those address are already physical don't change them
@@ -1276,15 +1340,18 @@ void vtlb_VMapBuffer(u32 vaddr, void* buffer, u32 size)
 	while (size > 0)
 	{
 		vtlbdata.vmap[vaddr >> VTLB_PAGE_BITS] = VTLBVirtual::fromPointer(bu8, vaddr);
+		if (s_execPAddr)
+			s_execPAddr[vaddr >> VTLB_PAGE_BITS] = 0xFFFFFFFFu;
 		vaddr += VTLB_PAGE_SIZE;
 		bu8 += VTLB_PAGE_SIZE;
 		size -= VTLB_PAGE_SIZE;
 	}
 }
 
-void vtlb_VMapWriteProtected(u32 vaddr, u32 size)
+void vtlb_VMapWriteProtected(u32 vaddr, u32 paddr, u32 size)
 {
 	verify(0 == (vaddr & VTLB_PAGE_MASK));
+	verify(0 == (paddr & VTLB_PAGE_MASK));
 	verify(0 == (size & VTLB_PAGE_MASK) && size > 0);
 
 	// Fastmem hands stores straight to host memory with no handler in the way,
@@ -1295,7 +1362,10 @@ void vtlb_VMapWriteProtected(u32 vaddr, u32 size)
 	{
 		vtlbdata.vmap[vaddr >> VTLB_PAGE_BITS] =
 			VTLBVirtual(VTLBPhysical::fromHandler(WriteProtectedVirtHandler), vaddr, vaddr);
+		if (s_execPAddr)
+			s_execPAddr[vaddr >> VTLB_PAGE_BITS] = (paddr >= VTLB_PMAP_SZ) ? 0xFFFFFFFFu : (paddr & ~VTLB_PAGE_MASK);
 		vaddr += VTLB_PAGE_SIZE;
+		paddr += VTLB_PAGE_SIZE;
 		size -= VTLB_PAGE_SIZE;
 	}
 }
@@ -1310,6 +1380,8 @@ void vtlb_VMapUnmap(u32 vaddr, u32 size)
 	while (size > 0)
 	{
 		vtlbdata.vmap[vaddr >> VTLB_PAGE_BITS] = VTLBVirtual(VTLBPhysical::fromHandler(UnmappedVirtHandler), vaddr, vaddr);
+		if (s_execPAddr)
+			s_execPAddr[vaddr >> VTLB_PAGE_BITS] = 0xFFFFFFFFu;
 		vaddr += VTLB_PAGE_SIZE;
 		size -= VTLB_PAGE_SIZE;
 	}
@@ -1365,6 +1437,7 @@ void vtlb_Reset()
 void vtlb_Shutdown()
 {
 	vtlb_RemoveFastmemMappings();
+	vtlb_DisableGuestMmu();
 	s_fastmem_backpatch_info.clear();
 	s_fastmem_faulting_pcs.clear();
 }
@@ -1516,6 +1589,8 @@ vtlb_ProtectionMode mmap_GetRamPageInfo(u32 paddr)
 	pxAssert(eeMem);
 
 	paddr &= ~0xfff;
+	if (paddr < Ps2MemSize::ExposedRam)
+		return m_PageProtectInfo[paddr >> __pageshift].Mode;
 
 	uptr ptr = (uptr)PSM(paddr);
 	uptr rampage = ptr - (uptr)eeMem->Main;
@@ -1535,8 +1610,16 @@ void mmap_MarkCountedRamPage(u32 paddr)
 
 	paddr &= ~__pagemask;
 
-	uptr ptr = (uptr)PSM(paddr);
-	int rampage = (ptr - (uptr)eeMem->Main) >> __pageshift;
+	int rampage;
+	if (paddr < Ps2MemSize::ExposedRam)
+	{
+		rampage = paddr >> __pageshift;
+	}
+	else
+	{
+		uptr ptr = (uptr)PSM(paddr);
+		rampage = (ptr - (uptr)eeMem->Main) >> __pageshift;
+	}
 
 	// Important: Update the ReverseRamMap here because TLB changes could alter the paddr
 	// mapping into eeMem->Main.

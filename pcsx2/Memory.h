@@ -163,7 +163,7 @@ extern void memSetKernelMode();
 //extern void memSetSupervisorMode();
 extern void memSetUserMode();
 // Map a page readable but not writable, so a store raises TLB Modified.
-extern void memSetPageAddrReadOnly(u32 vaddr);
+extern void memSetPageAddrReadOnly(u32 vaddr, u32 paddr);
 extern void memSetPageAddr(u32 vaddr, u32 paddr);
 
 // kuseg is TLB-mapped except while Status.ERL = 1, when it is direct-mapped to

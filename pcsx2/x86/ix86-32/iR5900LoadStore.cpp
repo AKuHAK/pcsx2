@@ -432,7 +432,7 @@ void recSWL()
 	if (!CHECK_FASTMEM || vtlb_IsFaultingPC(pc))
 		iFlushCall(FLUSH_FULLVTLB);
 
-	xForwardJE8 skip;
+	xForwardJE32 skip;
 	xSHL(temp, 3);
 
 	vtlb_DynGenReadNonQuad(32, false, false, arg1regd.GetId(), RETURN_READ_IN_RAX);
@@ -507,7 +507,7 @@ void recSWR()
 	if (!CHECK_FASTMEM || vtlb_IsFaultingPC(pc))
 		iFlushCall(FLUSH_FULLVTLB);
 
-	xForwardJE8 skip;
+	xForwardJE32 skip;
 	xSHL(temp, 3);
 
 	vtlb_DynGenReadNonQuad(32, false, false, arg1regd.GetId(), RETURN_READ_IN_RAX);
@@ -843,7 +843,7 @@ void recSDL()
 		if (!CHECK_FASTMEM || vtlb_IsFaultingPC(pc))
 			iFlushCall(FLUSH_FULLVTLB);
 
-		xForwardJE8 skip;
+		xForwardJE32 skip;
 		xADD(temp1, 1);
 		vtlb_DynGenReadNonQuad(64, false, false, arg1regd.GetId(), RETURN_READ_IN_RAX);
 
@@ -929,7 +929,7 @@ void recSDR()
 		if (!CHECK_FASTMEM || vtlb_IsFaultingPC(pc))
 			iFlushCall(FLUSH_FULLVTLB);
 
-		xForwardJE8 skip;
+		xForwardJE32 skip;
 		vtlb_DynGenReadNonQuad(64, false, false, arg1regd.GetId(), RETURN_READ_IN_RAX);
 
 		xMOV(edx, 64);
