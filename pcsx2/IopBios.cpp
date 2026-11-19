@@ -479,6 +479,13 @@ namespace R3000A
 			return -IOP_EMFILE;
 		}
 
+		// Используются из DEV9/dvrp.cpp: без явной инстанциации clang не
+		// экспортирует эти специализации (MSVC прощал), линковка падает.
+		template IOManFile* getfd<IOManFile>(int fd);
+		template IOManDir* getfd<IOManDir>(int fd);
+		template int allocfd<IOManFile>(IOManFile* obj);
+		template int allocfd<IOManDir>(IOManDir* obj);
+
 		void freefd(int fd)
 		{
 			fd -= firstfd;

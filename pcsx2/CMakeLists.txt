@@ -315,6 +315,7 @@ set(pcsx2DEV9Sources
 	DEV9/smap.cpp
 	DEV9/sockets.cpp
 	DEV9/DEV9.cpp
+	DEV9/dvrp.cpp
 	DEV9/flash.cpp
 	DEV9/pcap_io.cpp
 	DEV9/net.cpp
@@ -326,6 +327,7 @@ set(pcsx2DEV9Headers
 	DEV9/ATA/ATA.h
 	DEV9/ATA/HddCreate.h
 	DEV9/DEV9.h
+	DEV9/dvrp.h
 	DEV9/InternalServers/DHCP_Logger.h
 	DEV9/InternalServers/DHCP_Server.h
 	DEV9/InternalServers/DNS_Logger.h
