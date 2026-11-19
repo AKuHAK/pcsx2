@@ -1393,9 +1393,34 @@ function(setup_main_executable target)
 				)
 				pcsx2_resource(${target} ${metallib} ${CMAKE_CURRENT_BINARY_DIR})
 			endfunction()
-			generateMetallib(macos-metal2.0 air64-apple-macos10.13 default)
-			generateMetallib(macos-metal2.2 air64-apple-macos10.15 Metal22)
-			generateMetallib(macos-metal2.3 air64-apple-macos11.0  Metal23)
+			execute_process(COMMAND xcrun -f metal RESULT_VARIABLE PCSX2_XCRUN_METAL_RESULT OUTPUT_QUIET ERROR_QUIET)
+			if(PCSX2_XCRUN_METAL_RESULT EQUAL 0)
+				generateMetallib(macos-metal2.0 air64-apple-macos10.13 default)
+				generateMetallib(macos-metal2.2 air64-apple-macos10.15 Metal22)
+				generateMetallib(macos-metal2.3 air64-apple-macos11.0  Metal23)
+			else()
+				# Нет компилятора Metal (только Command Line Tools, без Xcode):
+				# кладём в бандл склеенный исходник шейдеров, GSMTLDeviceInfo.mm
+				# скомпилирует его при запуске через newLibraryWithSource.
+				message(STATUS "xcrun metal not found: Metal shaders will be compiled at runtime")
+				set(metalSource ${CMAKE_CURRENT_BINARY_DIR}/GSMetalShaders.metal)
+				set(metalShaderPaths)
+				foreach(shader IN LISTS PCSX2_METAL_SHADERS)
+					list(APPEND metalShaderPaths ${PCSX2_SOURCE_DIR}/${shader})
+				endforeach()
+				file(GLOB metalShaderHeaders
+					${PCSX2_SOURCE_DIR}/GS/Renderers/Metal/*.h
+					${PCSX2_SOURCE_DIR}/GS/Renderers/Common/GSShaderEnums.h
+					${CMAKE_SOURCE_DIR}/bin/resources/shaders/common/*)
+				string(REPLACE ";" "|" metalShaderArg "${metalShaderPaths}")
+				add_custom_command(OUTPUT ${metalSource}
+					COMMAND ${CMAKE_COMMAND} -DOUTPUT=${metalSource} "-DSHADERS=${metalShaderArg}"
+						-P ${CMAKE_SOURCE_DIR}/cmake/MetalInlineShaders.cmake
+					DEPENDS ${metalShaderPaths} ${metalShaderHeaders} ${CMAKE_SOURCE_DIR}/cmake/MetalInlineShaders.cmake
+					VERBATIM
+				)
+				pcsx2_resource(${target} ${metalSource} ${CMAKE_CURRENT_BINARY_DIR})
+			endif()
 		endif()
 
 		set_target_properties(${target} PROPERTIES

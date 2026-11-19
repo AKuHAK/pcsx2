@@ -4,7 +4,9 @@
 #include "GSMTLDeviceInfo.h"
 #include "GS/GS.h"
 #include "common/Console.h"
+#include "common/FileSystem.h"
 #include "common/Path.h"
+#include "common/Timer.h"
 
 #ifdef __APPLE__
 
@@ -20,6 +22,52 @@ static id<MTLLibrary> loadMainLibrary(id<MTLDevice> dev, NSString* name)
 	return path ? [dev newLibraryWithFile:path error:nullptr] : nullptr;
 }
 
+/// Сборка без компилятора Metal (только Command Line Tools): вместо .metallib
+/// в ресурсах лежит склеенный исходник шейдеров, компилируем его при запуске.
+static id<MTLLibrary> compileMainLibraryFromSource(id<MTLDevice> dev)
+{
+	NSString* path = [[NSBundle mainBundle] pathForResource:@"GSMetalShaders" ofType:@"metal"];
+	if (!path)
+	{
+		std::string sspath = Path::Combine(EmuFolders::Resources, "GSMetalShaders.metal");
+		if (!FileSystem::FileExists(sspath.c_str()))
+			return nullptr;
+		path = [NSString stringWithUTF8String:sspath.c_str()];
+	}
+	NSError* err = nullptr;
+	NSString* source = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:&err];
+	if (!source)
+	{
+		Console.Error("Metal: Failed to read %s: %s", [path UTF8String], [[err localizedDescription] UTF8String]);
+		return nullptr;
+	}
+
+	MRCOwned<MTLCompileOptions*> opts = MRCTransfer([MTLCompileOptions new]);
+	if (@available(macOS 11.0, iOS 14.0, *))
+		[opts setLanguageVersion:MTLLanguageVersion2_3];
+	else
+		[opts setLanguageVersion:MTLLanguageVersion2_2];
+	if (@available(macOS 15.0, iOS 18.0, *))
+		[opts setMathMode:MTLMathModeFast];
+	else
+	{
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+		[opts setFastMathEnabled:YES];
+#pragma clang diagnostic pop
+	}
+
+	const Common::Timer timer;
+	id<MTLLibrary> lib = [dev newLibraryWithSource:source options:opts error:&err];
+	if (!lib)
+	{
+		Console.Error("Metal: Failed to compile shaders from source: %s", [[err localizedDescription] UTF8String]);
+		return nullptr;
+	}
+	DevCon.WriteLn("Metal: Compiled shaders from source in %.0f ms", timer.GetTimeMilliseconds());
+	return lib;
+}
+
 static MRCOwned<id<MTLLibrary>> loadMainLibrary(id<MTLDevice> dev)
 {
 	if (@available(macOS 11.0, iOS 14.0, *))
@@ -32,6 +80,8 @@ static MRCOwned<id<MTLLibrary>> loadMainLibrary(id<MTLDevice> dev)
 		if (id<MTLLibrary> lib = loadMainLibrary(dev, @"Metal21"))
 			return MRCTransfer(lib);
 	if (id<MTLLibrary> lib = loadMainLibrary(dev, @"default"))
+		return MRCTransfer(lib);
+	if (id<MTLLibrary> lib = compileMainLibraryFromSource(dev))
 		return MRCTransfer(lib);
 	return MRCTransfer([dev newDefaultLibrary]);
 }
