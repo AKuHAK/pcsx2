@@ -4,15 +4,26 @@
 #include "Common.h"
 #include "COP0.h"
 #include "vtlb.h"
+#include "MmuTrace.h"
 
 // Updates the CPU's mode of operation (either, Kernel, Supervisor, or User modes).
 // kuseg is unmapped when Status.ERL=1 (EE Core User's Manual Fig. 5-1, note 3),
 // otherwise kuseg is TLB-mapped in all three modes.
 static u32 tlbInstalledASID = 0;
 
+u32 cop0GetInstalledASID() { return tlbInstalledASID; }
+
 __ri void cpuUpdateOperationMode()
 {
 	const bool direct = (cpuRegs.CP0.n.Status.b.ERL != 0);
+
+	if (g_mmuTrace)
+	{
+		static bool s_lastDirect = true;
+		if (direct != s_lastDirect)
+			mmuTraceEvent(MMUT_ERL, direct, cpuRegs.CP0.n.EntryHi, cpuRegs.pc, tlbInstalledASID, 0);
+		s_lastDirect = direct;
+	}
 
 	if (direct && cpuRegs.CP0.n.EntryHi == 0)
 		tlbInstalledASID = 0;
@@ -446,6 +457,8 @@ void WriteCP0EntryHi(u32 value)
 
 	if (newASID != tlbInstalledASID)
 	{
+		if (g_mmuTrace)
+			mmuTraceEvent(MMUT_ASID, tlbInstalledASID, newASID, cpuRegs.pc, value, 0);
 		for (int t = 0; t < 48; t++)
 			UnmapTLB(tlb[t], t);
 
@@ -541,6 +554,8 @@ namespace COP0 {
 			cpuRegs.CP0.n.Index, cpuRegs.CP0.n.PageMask, cpuRegs.CP0.n.EntryHi,
 			cpuRegs.CP0.n.EntryLo0, cpuRegs.CP0.n.EntryLo1);
 
+		if (g_mmuTrace)
+			mmuTraceEvent(MMUT_TLBW, j, cpuRegs.CP0.n.EntryHi, cpuRegs.CP0.n.EntryLo0, cpuRegs.CP0.n.EntryLo1, tlb[j].EntryHi.UL);
 		const bool unmapped_low_tlb = (cpuRegs.CP0.n.Status.b.ERL == 0 && cpuRegs.CP0.n.Status.b.BEV == 0) && !tlb[j].isSPR() && tlb[j].VPN2() < 0x02000000u && (tlb[j].EntryLo0.V || tlb[j].EntryLo1.V);
 		UnmapTLB(tlb[j], j);
 		WriteTLB(j);
@@ -564,6 +579,8 @@ namespace COP0 {
 			cpuRegs.CP0.n.Random, cpuRegs.CP0.n.PageMask, cpuRegs.CP0.n.EntryHi,
 			cpuRegs.CP0.n.EntryLo0, cpuRegs.CP0.n.EntryLo1);
 
+		if (g_mmuTrace)
+			mmuTraceEvent(MMUT_TLBW, j | 0x100, cpuRegs.CP0.n.EntryHi, cpuRegs.CP0.n.EntryLo0, cpuRegs.CP0.n.EntryLo1, tlb[j].EntryHi.UL);
 		UnmapTLB(tlb[j], j);
 		WriteTLB(j);
 		cpuSetMmuGuestActive();
@@ -778,6 +795,8 @@ cpuRegs.PERF.n.pccr, cpuRegs.PERF.n.pcr0, cpuRegs.PERF.n.pcr1, _Imm_ & 0x3F);*/
 			cpuRegs.pc = cpuRegs.CP0.n.EPC;
 			cpuRegs.CP0.n.Status.b.EXL = 0;
 		}
+		if (g_mmuTrace)
+			mmuTraceEvent(MMUT_ERET, cpuRegs.pc, cpuRegs.CP0.n.Status.val, cpuRegs.CP0.n.EntryHi, 0, 0);
 		cpuUpdateOperationMode();
 		cpuSetNextEventDelta(4);
 		intSetBranch();

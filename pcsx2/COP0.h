@@ -11,6 +11,7 @@ extern u32 ReadCP0Random();
 extern void WriteCP0EntryHi(u32 value);
 extern void cop0RebuildExecPAddrMap();
 extern void cpuUpdateOperationMode();
+extern u32 cop0GetInstalledASID();
 extern void WriteTLB(int i);
 extern void UnmapTLB(const tlbs& t, int i);
 extern void MapTLB(const tlbs& t, int i);

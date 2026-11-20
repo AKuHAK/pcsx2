@@ -518,6 +518,7 @@
       <ExcludedFromBuild Condition="'$(Platform)'!='x64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="COP0.cpp" />
+    <ClCompile Include="MmuTrace.cpp" />
     <ClCompile Include="COP2.cpp" />
     <ClCompile Include="FPU.cpp" />
     <ClCompile Include="Interpreter.cpp" />
@@ -914,6 +915,7 @@
     <ClInclude Include="R5900.h" />
     <ClInclude Include="R5900OpcodeTables.h" />
     <ClInclude Include="COP0.h" />
+    <ClInclude Include="MmuTrace.h" />
     <ClInclude Include="x86\iCOP0.h" />
     <ClInclude Include="x86\iFPU.h" />
     <ClInclude Include="x86\iMMI.h" />

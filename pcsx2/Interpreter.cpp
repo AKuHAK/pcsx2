@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "Common.h"
+#include "MmuTrace.h"
 #include "R5900OpcodeTables.h"
 #include "VMManager.h"
 #include "Elfheader.h"
@@ -169,6 +170,8 @@ static void execI()
 #endif
 
 	const u32 pc = cpuRegs.pc;
+	if (g_mmuTrace) [[unlikely]]
+		mmuTraceCheckPc(pc);
 	// We need to increase the pc before executing the memRead32. An exception could appears
 	// and it expects the PC counter to be pre-incremented
 	cpuRegs.pc += 4;

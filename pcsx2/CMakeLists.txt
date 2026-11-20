@@ -57,6 +57,7 @@ set(pcsx2Sources
 	BuildVersion.cpp
 	Cache.cpp
 	COP0.cpp
+	MmuTrace.cpp
 	COP2.cpp
 	Counters.cpp
 	Dmac.cpp
@@ -146,6 +147,7 @@ set(pcsx2Headers
 	Common.h
 	Config.h
 	COP0.h
+	MmuTrace.h
 	Counters.h
 	Dmac.h
 	GameDatabase.h

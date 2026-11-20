@@ -11,6 +11,7 @@
 #include "VUmicro.h"
 #include "vtlb.h"
 #include "COP0.h"
+#include "MmuTrace.h"
 #include "MTVU.h"
 #include "VMManager.h"
 
@@ -81,6 +82,7 @@ void cpuReset()
 	std::memset(&fpuRegs, 0, sizeof(fpuRegs));
 	std::memset(&tlb, 0, sizeof(tlb));
 	cachedTlbs.count = 0;
+	mmuTraceInit();
 
 	cpuRegs.pc				= 0xbfc00000; //set pc reg to stack
 	cpuRegs.CP0.n.Config	= 0x440;
@@ -196,6 +198,9 @@ __ri void cpuException(u32 code, u32 bd)
 		cpuRegs.pc = 0x80000000 + offset;
 	else
 		cpuRegs.pc = 0xBFC00200 + offset;
+
+	if (g_mmuTrace)
+		mmuTraceEvent(MMUT_EXC, cpuRegs.CP0.n.Cause, cpuRegs.CP0.n.EPC, cpuRegs.CP0.n.BadVAddr, cpuRegs.CP0.n.Status.val, cpuRegs.CP0.n.EntryHi);
 
 	cpuUpdateOperationMode();
 }
