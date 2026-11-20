@@ -507,6 +507,18 @@ void DSRLV(){ if (!_Rd_) return; cpuRegs.GPR.r[_Rd_].UD[0] = (u64)(cpuRegs.GPR.r
 //    exceptions, since the lower bits of the address are used to determine the portions
 //    of the address/register operations.
 
+// Forced event test after an EE counter read (0x10000000..0x10001fff). Skipped:
+//  - in a branch delay slot: an interrupt taken in the middle of the slot gets
+//    EPC = the slot itself (not the branch) with BD set, so after ERET the branch
+//    is lost and the already executed load runs again (for lw v0, 4(v0) with a
+//    clobbered base). doBranch() runs intEventTest() right after the slot anyway;
+//  - with a guest-managed MMU (PS2 Linux): kuseg is TLB-mapped, 0x10000000 holds
+//    user program data/GOT, and the kernel reads the counters through kseg1.
+static __fi bool IsEECounterRead(u32 addr)
+{
+	return (addr & 0xFFFFE000) == 0x10000000 && !cpuRegs.branch && !g_eeMmuGuestActive;
+}
+
 __noinline static void RaiseAddressError(u32 addr, bool store)
 {
 	static int spamStop = 0;
@@ -532,7 +544,7 @@ void LB()
 	cpuRegs.GPR.r[_Rt_].SD[0] = temp;
 
 	// Force event test on EE counter read to improve read + interrupt syncing. Namely ESPN Games.
-	if ((addr & 0xFFFFE000) == 0x10000000)
+	if (IsEECounterRead(addr))
 	{
 		intUpdateCPUCycles();
 		intEventTest();
@@ -548,7 +560,7 @@ void LBU()
 	cpuRegs.GPR.r[_Rt_].UD[0] = temp;
 
 	// Force event test on EE counter read to improve read + interrupt syncing. Namely ESPN Games.
-	if ((addr & 0xFFFFE000) == 0x10000000)
+	if (IsEECounterRead(addr))
 	{
 		intUpdateCPUCycles();
 		intEventTest();
@@ -568,7 +580,7 @@ void LH()
 	cpuRegs.GPR.r[_Rt_].SD[0] = temp;
 
 	// Force event test on EE counter read to improve read + interrupt syncing. Namely ESPN Games.
-	if ((addr & 0xFFFFE000) == 0x10000000)
+	if (IsEECounterRead(addr))
 	{
 		intUpdateCPUCycles();
 		intEventTest();
@@ -588,7 +600,7 @@ void LHU()
 	cpuRegs.GPR.r[_Rt_].UD[0] = temp;
 
 	// Force event test on EE counter read to improve read + interrupt syncing. Namely ESPN Games.
-	if ((addr & 0xFFFFE000) == 0x10000000)
+	if (IsEECounterRead(addr))
 	{
 		intUpdateCPUCycles();
 		intEventTest();
@@ -608,7 +620,7 @@ void LW()
 	cpuRegs.GPR.r[_Rt_].SD[0] = (s32)temp;
 
 	// Force event test on EE counter read to improve read + interrupt syncing. Namely ESPN Games.
-	if ((addr & 0xFFFFE000) == 0x10000000)
+	if (IsEECounterRead(addr))
 	{
 		intUpdateCPUCycles();
 		intEventTest();
