@@ -361,22 +361,29 @@ void UnmapTLB(const tlbs& t, int i)
 		}
 	}
 
-	for (size_t i = 0; i < cachedTlbs.count; i++)
+	// cachedTlbs is rebuilt from all slots in WriteTLB().
+}
+
+// Cached TLB list for EE cache emulation. It used to be maintained incrementally:
+// entries were appended in WriteTLB() and removed in UnmapTLB(), which returns
+// early for slots of a non-installed ASID. Under PS2 Linux (many ASIDs) count
+// grew without bound and wrote past the 48-entry arrays.
+static void RebuildCachedTlbs()
+{
+	size_t idx = 0;
+	for (int k = 0; k < 48; k++)
 	{
-		if (cachedTlbs.PFN0s[i] == t.PFN0() && cachedTlbs.PFN1s[i] == t.PFN1() && cachedTlbs.PageMasks[i] == ConvertPageMask(t.PageMask.UL))
-		{
-			for (size_t j = i; j < cachedTlbs.count - 1; j++)
-			{
-				cachedTlbs.CacheEnabled0[j] = cachedTlbs.CacheEnabled0[j + 1];
-				cachedTlbs.CacheEnabled1[j] = cachedTlbs.CacheEnabled1[j + 1];
-				cachedTlbs.PFN0s[j] = cachedTlbs.PFN0s[j + 1];
-				cachedTlbs.PFN1s[j] = cachedTlbs.PFN1s[j + 1];
-				cachedTlbs.PageMasks[j] = cachedTlbs.PageMasks[j + 1];
-			}
-			cachedTlbs.count--;
-			break;
-		}
+		const tlbs& t = tlb[k];
+		if (t.isSPR() || !((t.EntryLo0.V && t.EntryLo0.isCached()) || (t.EntryLo1.V && t.EntryLo1.isCached())))
+			continue;
+		cachedTlbs.CacheEnabled0[idx] = t.EntryLo0.isCached() ? ~0 : 0;
+		cachedTlbs.CacheEnabled1[idx] = t.EntryLo1.isCached() ? ~0 : 0;
+		cachedTlbs.PFN1s[idx] = t.PFN1();
+		cachedTlbs.PFN0s[idx] = t.PFN0();
+		cachedTlbs.PageMasks[idx] = ConvertPageMask(t.PageMask.UL);
+		idx++;
 	}
+	cachedTlbs.count = static_cast<u32>(idx);
 }
 
 void WriteTLB(int i)
@@ -402,17 +409,7 @@ void WriteTLB(int i)
 			tlb[i].EntryLo1.C = 2;
 	}
 
-	if (!tlb[i].isSPR() && ((tlb[i].EntryLo0.V && tlb[i].EntryLo0.isCached()) || (tlb[i].EntryLo1.V && tlb[i].EntryLo1.isCached())))
-	{
-		const size_t idx = cachedTlbs.count;
-		cachedTlbs.CacheEnabled0[idx] = tlb[i].EntryLo0.isCached() ? ~0 : 0;
-		cachedTlbs.CacheEnabled1[idx] = tlb[i].EntryLo1.isCached() ? ~0 : 0;
-		cachedTlbs.PFN1s[idx] = tlb[i].PFN1();
-		cachedTlbs.PFN0s[idx] = tlb[i].PFN0();
-		cachedTlbs.PageMasks[idx] = ConvertPageMask(tlb[i].PageMask.UL);
-
-		cachedTlbs.count++;
-	}
+	RebuildCachedTlbs();
 
 	MapTLB(tlb[i], i);
 
