@@ -159,7 +159,10 @@ void tx_process()
 		}
 		else
 		{
-			const u32 base = (pbd->pointer - 0x1000) & 16383;
+			// The TX FIFO is 4 KiB and the write pointer wraps at SMAP_TX_BUFSIZE.
+			// PS2 Linux (DMARELAY) DMAs several frames back to back from the first frame's
+			// address, and the BDs of later frames point past the wrap.
+			const u32 base = (pbd->pointer - 0x1000) & (SMAP_TX_BUFSIZE - 1);
 			DevCon.WriteLn("DEV9: Sending Packet from base %x, size %d", base, pbd->length);
 
 			pk.size = pbd->length;
@@ -227,9 +230,9 @@ void tx_process()
 			}
 			*/
 
-			if (base + pbd->length > 16384)
+			if (base + pbd->length > SMAP_TX_BUFSIZE)
 			{
-				u32 was = 16384 - base;
+				u32 was = SMAP_TX_BUFSIZE - base;
 				memcpy(pk.buffer, dev9.txfifo + base, was);
 				memcpy(pk.buffer + was, dev9.txfifo, pbd->length - was);
 				DevCon.WriteLn("DEV9: Warped read, was=%u, sz=%u, sz-was=%u", was, pbd->length, pbd->length - was);
@@ -582,7 +585,7 @@ void smap_write8(u32 addr, u8 value)
 				dev9.txfifo_rd_ptr = 0;
 				dev9Ru8(SMAP_R_TXFIFO_FRAME_CNT) = 0; //this actualy needs to be atomic (lock mov ...)
 				dev9Ru32(SMAP_R_TXFIFO_WR_PTR) = 0;
-				dev9Ru32(SMAP_R_TXFIFO_SIZE) = 16384;
+				dev9Ru32(SMAP_R_TXFIFO_SIZE) = SMAP_TX_BUFSIZE;
 				smap_tx_dma_ptr = nullptr;
 				smap_tx_dma_size = 0;
 			}
@@ -858,9 +861,9 @@ void smap_write32(u32 addr, u32 value)
 		case SMAP_R_TXFIFO_DATA:
 		{
 			//DevCon.WriteLn("DEV9: SMAP_R_TXFIFO_DATA 32bit write %x", value);
-			const u32 wr_ptr = dev9Ru32(SMAP_R_TXFIFO_WR_PTR) & 16383;
+			const u32 wr_ptr = dev9Ru32(SMAP_R_TXFIFO_WR_PTR) & (SMAP_TX_BUFSIZE - 1);
 			*((u32*)(dev9.txfifo + wr_ptr)) = value;
-			dev9Ru32(SMAP_R_TXFIFO_WR_PTR) = (wr_ptr + 4) & 16383;
+			dev9Ru32(SMAP_R_TXFIFO_WR_PTR) = (wr_ptr + 4) & (SMAP_TX_BUFSIZE - 1);
 			return;
 		}
 		default:
@@ -907,7 +910,7 @@ void smap_writeDMA8Mem(u32* pMem, int size)
 		smap_tx_dma_ptr = nullptr;
 		smap_tx_dma_size = 0;
 
-		dev9Ru32(SMAP_R_TXFIFO_WR_PTR) &= 16383;
+		dev9Ru32(SMAP_R_TXFIFO_WR_PTR) &= SMAP_TX_BUFSIZE - 1;
 
 		DevCon.WriteLn("DEV9:  * * SMAP DMA WRITE START: wr_ptr=%d, rd_ptr=%d", dev9Ru32(SMAP_R_TXFIFO_WR_PTR), dev9.txfifo_rd_ptr);
 		while (size > 0)
@@ -917,7 +920,7 @@ void smap_writeDMA8Mem(u32* pMem, int size)
 			pMem++;
 
 			*((u32*)(dev9.txfifo + dev9Ru32(SMAP_R_TXFIFO_WR_PTR))) = value;
-			dev9Ru32(SMAP_R_TXFIFO_WR_PTR) = (dev9Ru32(SMAP_R_TXFIFO_WR_PTR) + 4) & 16383;
+			dev9Ru32(SMAP_R_TXFIFO_WR_PTR) = (dev9Ru32(SMAP_R_TXFIFO_WR_PTR) + 4) & (SMAP_TX_BUFSIZE - 1);
 			size -= 4;
 		}
 		DevCon.WriteLn("DEV9:  * * SMAP DMA WRITE END:   wr_ptr=%d, rd_ptr=%d", dev9Ru32(SMAP_R_TXFIFO_WR_PTR), dev9.txfifo_rd_ptr);
