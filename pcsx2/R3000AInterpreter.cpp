@@ -19,6 +19,10 @@ bool iopIsDelaySlot = false;
 static bool branch2 = 0;
 static u32 branchPC;
 
+// Set when the IOP recompiler is requested on a host without one (ARM64): an IOP thread
+// idling in a branch-to-self loop gets fast-forwarded to the next IOP event.
+static bool s_fastMode = false;
+
 static void doBranch(s32 tar);	// forward declared prototype
 
 /*********************************************************
@@ -254,12 +258,19 @@ static void doBranch(s32 tar) {
 		psxRegs.GPR.n.a0 = Ps2MemSize::ExposedIopRam >> 20;
 	}
 
+	const u32 branchInsnPC = psxRegs.pc - 4;
+
 	branch2 = iopIsDelaySlot = true;
 	branchPC = tar;
 	execI();
 	PSXCPU_LOG( "\n" );
 	iopIsDelaySlot = false;
 	psxRegs.pc = branchPC;
+
+	// "b ." with a nop in the delay slot spins until an interrupt: skip ahead to the next event.
+	if (s_fastMode && branchPC == branchInsnPC && psxRegs.code == 0 &&
+		static_cast<s64>(psxRegs.iopNextEventCycle - psxRegs.cycle) > 0)
+		psxRegs.cycle = psxRegs.iopNextEventCycle;
 
 	iopEventTest();
 }
@@ -272,6 +283,9 @@ static void intAlloc() {
 
 static void intReset() {
 	intAlloc();
+#ifndef _M_X86
+	s_fastMode = CHECK_IOPREC;
+#endif
 }
 
 static s32 intExecuteBlock( s32 eeCycles )
