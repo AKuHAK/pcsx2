@@ -7,6 +7,8 @@
 #include "common/BitUtils.h"
 #include "common/Console.h"
 
+#include <algorithm>
+
 namespace PacketReader::IP
 {
 	int IP_Packet::GetHeaderLength() const
@@ -100,39 +102,47 @@ namespace PacketReader::IP
 		//Bits 128-159
 		NetLib::ReadIPAddress(buffer, &offset, &destinationIP);
 
-		//Bits 160+
-		if (headerLength > 20) //IP options (if any)
+		if (headerLength < 20 || headerLength > length)
 		{
-			bool opReadFin = false;
-			do
+			Console.Error("DEV9: IP_Packet: Invalid header length %d (packet length %d)", headerLength, length);
+			headerLength = std::clamp<int>(headerLength, 20, std::max<int>(length, 20));
+		}
+
+		//Bits 160+
+		//IP options (if any)
+		while (offset < headerLength)
+		{
+			const u8 opKind = buffer[offset];
+			if (opKind == 0)
+				break;
+			if (opKind == 1)
 			{
-				const u8 opKind = buffer[offset];
-				const u8 opLen = buffer[offset + 1];
-				switch (opKind)
-				{
-					case 0:
-						opReadFin = true;
-						break;
-					case 1:
-						options.push_back(new IPopNOP());
-						offset += 1;
-						continue;
-					case 148:
-						options.push_back(new IPopRouterAlert(buffer, offset));
-						break;
-					default:
-						Console.Error("DEV9: IP_Packet: Got Unknown IP Option %d with len %d", opKind, opLen);
-						options.push_back(new IPopUnk(buffer, offset));
-						break;
-				}
-				offset += opLen;
-				if (offset == headerLength)
-					opReadFin = true;
-			} while (opReadFin == false);
+				options.push_back(new IPopNOP());
+				offset += 1;
+				continue;
+			}
+
+			// Every other option has a length byte that covers the kind and length bytes.
+			// A malformed length would otherwise never advance the offset (or run past the header).
+			const u8 opLen = (offset + 1 < headerLength) ? buffer[offset + 1] : 0;
+			if (opLen < 2 || offset + opLen > headerLength)
+			{
+				Console.Error("DEV9: IP_Packet: Malformed IP Option %d with len %d", opKind, opLen);
+				break;
+			}
+
+			if (opKind == 148 && opLen == 4)
+				options.push_back(new IPopRouterAlert(buffer, offset));
+			else
+			{
+				Console.Error("DEV9: IP_Packet: Got Unknown IP Option %d with len %d", opKind, opLen);
+				options.push_back(new IPopUnk(buffer, offset));
+			}
+			offset += opLen;
 		}
 		offset = headerLength;
 
-		payload = std::make_unique<IP_PayloadPtr>(&buffer[offset], length - offset, protocol);
+		payload = std::make_unique<IP_PayloadPtr>(&buffer[offset], std::max(length - offset, 0), protocol);
 	}
 
 	IP_Packet::IP_Packet(const IP_Packet& original)

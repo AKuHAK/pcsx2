@@ -7,6 +7,8 @@
 #include "common/BitUtils.h"
 #include "common/Console.h"
 
+#include <algorithm>
+
 namespace PacketReader::IP::TCP
 {
 	//Need flags
@@ -119,45 +121,50 @@ namespace PacketReader::IP::TCP
 		NetLib::ReadUInt16(buffer, &offset, &checksum);
 		NetLib::ReadUInt16(buffer, &offset, &urgentPointer);
 
-		//Bits 160+
-		if (headerLength > 20) //TCP options
+		if (headerLength < 20 || headerLength > bufferSize)
 		{
-			bool opReadFin = false;
-			do
+			Console.Error("DEV9: TCP_Packet: Invalid header length %d (packet length %d)", headerLength, bufferSize);
+			headerLength = std::clamp<int>(headerLength, 20, std::max<int>(bufferSize, 20));
+		}
+
+		//Bits 160+
+		//TCP options
+		while (offset < headerLength)
+		{
+			const u8 opKind = buffer[offset];
+			if (opKind == 0)
+				break;
+			if (opKind == 1)
 			{
-				const u8 opKind = buffer[offset];
-				const u8 opLen = buffer[offset + 1];
-				switch (opKind)
-				{
-					case 0:
-						opReadFin = true;
-						break;
-					case 1:
-						options.push_back(new TCPopNOP());
-						offset += 1;
-						continue;
-					case 2:
-						options.push_back(new TCPopMSS(buffer, offset));
-						break;
-					case 3:
-						options.push_back(new TCPopWS(buffer, offset));
-						break;
-					case 8:
-						options.push_back(new TCPopTS(buffer, offset));
-						break;
-					default:
-						Console.Error("Got Unknown TCP Option %d with len %d", opKind, opLen);
-						options.push_back(new IPopUnk(buffer, offset));
-						break;
-				}
-				offset += opLen;
-				if (offset == headerLength)
-					opReadFin = true;
-			} while (opReadFin == false);
+				options.push_back(new TCPopNOP());
+				offset += 1;
+				continue;
+			}
+
+			// A malformed length would otherwise never advance the offset (or run past the header).
+			const u8 opLen = (offset + 1 < headerLength) ? buffer[offset + 1] : 0;
+			if (opLen < 2 || offset + opLen > headerLength)
+			{
+				Console.Error("DEV9: TCP_Packet: Malformed TCP Option %d with len %d", opKind, opLen);
+				break;
+			}
+
+			if (opKind == 2 && opLen == 4)
+				options.push_back(new TCPopMSS(buffer, offset));
+			else if (opKind == 3 && opLen == 3)
+				options.push_back(new TCPopWS(buffer, offset));
+			else if (opKind == 8 && opLen == 10)
+				options.push_back(new TCPopTS(buffer, offset));
+			else
+			{
+				Console.Error("DEV9: TCP_Packet: Got Unknown TCP Option %d with len %d", opKind, opLen);
+				options.push_back(new IPopUnk(buffer, offset));
+			}
+			offset += opLen;
 		}
 		offset = headerLength;
 
-		payload = std::make_unique<PayloadPtr>(&buffer[offset], bufferSize - offset);
+		payload = std::make_unique<PayloadPtr>(&buffer[offset], std::max(bufferSize - offset, 0));
 		//AllDone
 	}
 
