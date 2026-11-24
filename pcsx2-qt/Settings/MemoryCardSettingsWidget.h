@@ -21,12 +21,26 @@ class MemoryCardListWidget final : public QTreeWidget
 {
 	Q_OBJECT
 public:
+	enum MemoryCardListColumn : int
+	{
+		Name,
+		Type,
+		Formatted,
+		LastModified,
+	};
+
 	explicit MemoryCardListWidget(QWidget* parent);
 	~MemoryCardListWidget() override;
 
 	void refresh(SettingsWindow* dialog);
 
 protected:
+	class MemoryCardListItem : public QTreeWidgetItem
+	{
+	public:
+		bool operator<(const QTreeWidgetItem& other) const override;
+	};
+
 	void mousePressEvent(QMouseEvent* event) override;
 	void mouseMoveEvent(QMouseEvent* event) override;
 
@@ -95,6 +109,9 @@ private:
 	void ejectSlot(u32 slot);
 
 	void createCard();
+
+	void saveCardListSortState();
+	void loadCardListSortState();
 
 	QString getSelectedCard() const;
 	bool isSelectedCardFormatted() const;

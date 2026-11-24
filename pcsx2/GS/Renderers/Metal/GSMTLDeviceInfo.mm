@@ -216,6 +216,9 @@ GSMTLDevice::GSMTLDevice(MRCOwned<id<MTLDevice>> dev)
 
 	features.depth_feedback = false;
 
+	features.rov = [dev areRasterOrderGroupsSupported];
+	features.rov_requires_r32 = [dev readWriteTextureSupport] < MTLReadWriteTextureTier2;
+
 	NSString* name = [dev name];
 	if ([name containsString:@"Intel"])
 	{
@@ -243,6 +246,9 @@ GSMTLDevice::GSMTLDevice(MRCOwned<id<MTLDevice>> dev)
 		if (@available(macOS 13, iOS 16, *))
 			if ([dev supportsFamily:MTLGPUFamilyMetal3])
 				features.depth_feedback = true;
+		// ROV doesn't work on AMD GPUs with no render target
+		// Ideally the driver would insert a dummy texture for us (it does on Linux) but the Metal driver doesn't.
+		features.rov_requires_rt = true;
 	}
 	else if ([name containsString:@"NVIDIA"])
 	{
@@ -251,7 +257,7 @@ GSMTLDevice::GSMTLDevice(MRCOwned<id<MTLDevice>> dev)
 	}
 	else if ([name containsString:@"Apple"])
 	{
-		// No special settings
+		features.broken_shader_depth = true;
 	}
 	else
 	{
@@ -268,6 +274,12 @@ GSMTLDevice::GSMTLDevice(MRCOwned<id<MTLDevice>> dev)
 		features.slow_color_compression = env[0] == '1' || env[0] == 'y' || env[0] == 'Y';
 	else
 		features.slow_color_compression = [[dev name] containsString:@"AMD"] || [[dev name] isEqualToString:@"Intel HD Graphics 4000"];
+
+	if (char* env = getenv("MTL_ROV_WITH_RT"))
+		features.rov_requires_rt = env[0] == '1' || env[0] == 'y' || env[0] == 'Y';
+
+	if (char* env = getenv("MTL_SHADER_DEPTH_WORKAROUND"))
+		features.broken_shader_depth = env[0] == '1' || env[0] == 'y' || env[0] == 'Y';
 
 	features.max_texsize = GetMaxTextureSize(dev);
 

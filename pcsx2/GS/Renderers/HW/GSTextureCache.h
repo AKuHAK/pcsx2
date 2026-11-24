@@ -154,6 +154,7 @@ public:
 		u32 m_end_block = MAX_BP; // Hint of the surface area.
 		bool m_32_bits_fmt = false; // Allow to detect the casting of 32 bits as 16 bits texture
 		bool m_was_dst_matched = false;
+		bool m_from_depth = false;
 		bool m_shared_texture = false;
 
 		__fi GSTexture* GetTexture() const { return m_texture; }
@@ -273,6 +274,7 @@ public:
 
 		void ScaleRTAlpha();
 		void UnscaleRTAlpha();
+		void RearrangeTarget(u32 new_bw, bool recycle = true);
 
 		void Update(bool cannot_scale = false);
 
@@ -315,6 +317,7 @@ public:
 		bool m_target = false;
 		bool m_target_direct = false;
 		bool m_repeating = false;
+		bool m_was_target = false;
 		bool m_valid_alpha_minmax = false;
 		std::pair<u8, u8> m_alpha_minmax = {0u, 255u};
 		std::vector<GSVector2i>* m_p2t = nullptr;
@@ -380,7 +383,7 @@ public:
 		void Add(Source* s, const GIFRegTEX0& TEX0);
 		void SwapTexture(GSTexture* old_tex, GSTexture* new_tex);
 		void RemoveAll();
-		void RemoveAt(Source* s);
+		void RemoveAt(Source* s, bool delete_source = true);
 	};
 
 	struct TargetHeightElem
@@ -575,10 +578,10 @@ public:
 		HashCacheEntry* hc_entry, bool new_texture_is_shared);
 
 	/// Converts single color value to depth using the specified shader expression.
-	static float ConvertColorToDepth(u32 c, ShaderConvert convert);
+	static float ConvertColorToDepth(u32 c, u32 src_bpp, u32 dst_bpp);
 
 	/// Converts single depth value to colour using the specified shader expression.
-	static u32 ConvertDepthToColor(float d, ShaderConvert convert);
+	static u32 ConvertDepthToColor(float d, u32 dst_bpp);
 
 	/// Copies RGB channels from depth target to a color target.
 	bool CopyRGBFromDepthToColor(Target* dst, Target* depth_src);

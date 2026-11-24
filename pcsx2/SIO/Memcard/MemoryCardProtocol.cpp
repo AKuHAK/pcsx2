@@ -358,6 +358,11 @@ u8 MemoryCardProtocol::PS1Read(u8 data)
 	{
 		return 0xff;
 	}
+	if (ps1McState.currentByte < 2 || ps1McState.currentByte > 139)
+	{
+		g_Sio0.SetAcknowledge(false);
+		return 0xff;
+	}
 
 	bool sendAck = true;
 	u8 ret = 0;
@@ -424,6 +429,12 @@ u8 MemoryCardProtocol::PS1State(u8 data)
 u8 MemoryCardProtocol::PS1Write(u8 data)
 {
 	MC_LOG.WriteLn("%s", __FUNCTION__);
+	if (ps1McState.currentByte < 2 || ps1McState.currentByte > 137)
+	{
+		g_Sio0.SetAcknowledge(false);
+		return 0xff;
+	}
+
 	bool sendAck = true;
 	u8 ret = 0;
 

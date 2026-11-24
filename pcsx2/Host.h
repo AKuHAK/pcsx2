@@ -75,6 +75,9 @@ namespace Host
 	/// Copies the provided text to the host's clipboard, if present.
 	bool CopyTextToClipboard(const std::string_view text);
 
+	/// Returns the current text from the host's clipboard, if present.
+	std::string GetTextFromClipboard();
+
 	/// Requests settings reset. Can be called from any thread, will call back and apply on the CPU thread.
 	bool RequestResetSettings(bool folders, bool core, bool controllers, bool hotkeys, bool ui);
 
@@ -92,6 +95,12 @@ namespace Host
 
 	/// Cancels game list refresh, if there is one in progress.
 	void CancelGameListRefresh();
+
+	/// Notifies the host when a favorite changes. May be called from any thread.
+	void OnGameListFavoriteChanged(const std::string& path);
+
+	/// Notifies the host when settings for a game change. May be called from any thread.
+	void OnGameSettingsChanged(const std::string& path);
 
 	/// Requests shut down of the current virtual machine.
 	void RequestVMShutdown(bool allow_confirm, bool allow_save_state, bool default_save_state);

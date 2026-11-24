@@ -11,7 +11,6 @@
 #include "COP0.h"
 #include "R5900OpcodeTables.h"
 #include "iR5900.h"
-#include "iCOP0.h"
 
 namespace Interp = R5900::Interpreter::OpcodeImpl::COP0;
 using namespace x86Emitter;
@@ -157,7 +156,7 @@ void recMFC0()
 		xMOV(ptr64[&cpuRegs.cycle], rcx); // update cycles
 		xMOV(rax, rcx);
 		xSUB(rax, ptr[&cpuRegs.lastCOP0Cycle]);
-		xADD(ptr[&cpuRegs.CP0.n.Count], rax);
+		xADD(ptr32[&cpuRegs.CP0.n.Count], eax);
 		xMOV(ptr[&cpuRegs.lastCOP0Cycle], rcx);
 
 		if (!_Rt_)

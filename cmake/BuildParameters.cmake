@@ -18,10 +18,12 @@ option(POSITION_INDEPENDENT_CODE "Generate position-independent code. It is reco
 #-------------------------------------------------------------------------------
 # Graphical option
 #-------------------------------------------------------------------------------
-if(NOT APPLE)
-	option(USE_OPENGL "Enable OpenGL GS renderer" ON)
+if(NOT (WIN32 AND ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "arm64" OR "${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "ARM64" OR "${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "aarch64")))
+	if(NOT APPLE)
+		option(USE_OPENGL "Enable OpenGL GS renderer" ON)
+	endif()
+	option(USE_VULKAN "Enable Vulkan GS renderer" ON)
 endif()
-option(USE_VULKAN "Enable Vulkan GS renderer" ON)
 
 #-------------------------------------------------------------------------------
 # Path and lib option
@@ -78,8 +80,8 @@ mark_as_advanced(CMAKE_C_FLAGS_DEVEL CMAKE_CXX_FLAGS_DEVEL CMAKE_LINKER_FLAGS_DE
 #-------------------------------------------------------------------------------
 # Select the architecture
 #-------------------------------------------------------------------------------
-if("${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "x86_64" OR "${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "amd64" OR
-   "${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "AMD64" OR "${CMAKE_OSX_ARCHITECTURES}" STREQUAL "x86_64")
+if("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "x86_64" OR "${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "amd64" OR
+   "${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "AMD64" OR "${CMAKE_OSX_ARCHITECTURES}" STREQUAL "x86_64")
 	# Multi-ISA only exists on x86.
 	option(DISABLE_ADVANCE_SIMD "Disable advance use of SIMD (SSE2+ & AVX)" OFF)
 
@@ -105,12 +107,12 @@ if("${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "x86_64" OR "${CMAKE_HOST_SYSTEM_PR
 			add_compile_options("-msse" "-msse2" "-msse4.1" "-mfxsr")
 		else()
 			# Can't use march=native on Apple Silicon.
-			if(NOT APPLE OR "${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "x86_64")
+			if(NOT APPLE OR "${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "x86_64")
 				add_compile_options("-march=native")
 			endif()
 		endif()
 	endif()
-elseif("${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "arm64" OR "${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "aarch64" OR
+elseif("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "arm64" OR "${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "aarch64" OR
        "${CMAKE_OSX_ARCHITECTURES}" STREQUAL "arm64")
 	message(STATUS "Building for Apple Silicon (ARM64).")
 	set(ARCH_ARM64 TRUE)
@@ -119,18 +121,18 @@ elseif("${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "arm64" OR "${CMAKE_HOST_SYSTEM
 		add_compile_options("-march=armv8.4-a" "-mcpu=apple-m1")
 	else()
 		# Require atomic rmw instructions
-		add_compile_options("-march=armv8.1-a")
+		add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:-march=armv8.1-a>")
 	endif()
 
 	# If we're running on Linux, we need to detect the page/cache line size.
 	# It could be a virtual machine with 4K pages, or 16K with Asahi.
-	if(LINUX)
+	if(LINUX AND NOT CMAKE_CROSSCOMPILING)
 		detect_page_size()
 		list(APPEND PCSX2_DEFS OVERRIDE_HOST_PAGE_SIZE=${HOST_PAGE_SIZE})
 		detect_cache_line_size()
 		list(APPEND PCSX2_DEFS OVERRIDE_HOST_CACHE_LINE_SIZE=${HOST_CACHE_LINE_SIZE})
 	endif()
-	
+
 	# Windows page/cache line size seems to match x68-64 
 	if(WIN32)
 		list(APPEND PCSX2_DEFS OVERRIDE_HOST_PAGE_SIZE=0x1000)
@@ -138,7 +140,7 @@ elseif("${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "arm64" OR "${CMAKE_HOST_SYSTEM
 		list(APPEND PCSX2_DEFS OVERRIDE_HOST_CACHE_LINE_SIZE=64)
 	endif()
 else()
-	message(FATAL_ERROR "Unsupported architecture: ${CMAKE_HOST_SYSTEM_PROCESSOR}")
+	message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 
 # Require C++20.
@@ -200,7 +202,10 @@ endif()
 if(MSVC)
 	# Enable PDB generation in release builds
 	add_compile_options(
-		$<${CONFIG_REL_NO_DEB}:/Zi>
+		$<$<AND:${CONFIG_REL_NO_DEB},$<COMPILE_LANGUAGE:C,CXX,ASM_MASM>>:/Zi>
+	)
+	add_compile_options(
+		$<$<AND:${CONFIG_REL_NO_DEB},$<COMPILE_LANGUAGE:ASM_MARMASM>>:-g>
 	)
 	add_link_options(
 		$<${CONFIG_REL_NO_DEB}:/DEBUG>
@@ -300,8 +305,8 @@ else()
 	if(CMAKE_INTERPROCEDURAL_OPTIMIZATION)
 		message(WARNING
 			"The CMAKE_INTERPROCEDURAL_OPTIMIZATION option is enabled but the "
-			"CMAKE_POSITION_INDEPENDENT_CODE option is disabled. This has been "
-			"found to result in broken builds on certain platforms.")
+			"POSITION_INDEPENDENT_CODE option is disabled. This has been found "
+			"to result in broken builds on certain platforms.")
 	endif()
 
 	set(CMAKE_POSITION_INDEPENDENT_CODE OFF)

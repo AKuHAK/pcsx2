@@ -5,7 +5,8 @@
 
 #include "ui_DisassemblyView.h"
 
-#include "DebuggerView.h"
+#include "Debugger/DebuggerView.h"
+#include "Debugger/NavigationHistoryStack.h"
 
 #include "pcsx2/DebugTools/DisassemblyManager.h"
 
@@ -25,6 +26,12 @@ public:
 
 	// Required for the breakpoint list (ugh wtf)
 	QString GetLineDisasm(u32 address);
+
+	bool supportsNavigation() override;
+	bool canNavigateBack() override;
+	bool canNavigateForward() override;
+	void navigateBack() override;
+	void navigateForward() override;
 
 protected:
 	void paintEvent(QPaintEvent* event) override;
@@ -58,6 +65,7 @@ public slots:
 	void contextStubFunction();
 	void contextRestoreFunction();
 	void contextShowInstructionBytes();
+	void contextShowModuleOffset();
 
 	void gotoAddressAndSetFocus(u32 address);
 	void gotoProgramCounterOnPause();
@@ -68,7 +76,15 @@ public slots:
 private:
 	Ui::DisassemblyView m_ui;
 
-	u32 m_visibleStart = 0x100000; // The address of the first instruction shown.
+	struct DisasmLine {
+		u32 address;
+		QString text;
+		u32 size;
+	};
+
+	std::vector<DisasmLine> m_lines;
+
+	u32 m_visibleStart = STARTING_ADDRESS; // The address of the first instruction shown.
 	u32 m_visibleRows;
 	u32 m_selectedAddressStart = 0;
 	u32 m_selectedAddressEnd = 0;
@@ -78,12 +94,19 @@ private:
 	std::map<u32, std::tuple<u32, u32>> m_stubbedFunctions;
 
 	bool m_showInstructionBytes = true;
+	bool m_showModuleOffset = true;
 	bool m_goToProgramCounterOnPause = true;
 	DisassemblyManager m_disassemblyManager;
 
+	NavigationHistoryStack<u32> m_navigation_history{STARTING_ADDRESS};
+
+	u32 GetAddrFromRow(int row);
+	s32 GetFirstRowFromAddr(u32 addr);
+	s32 GetLastRowFromAddr(u32 addr);
 	QString GetDisassemblyTitleLine();
 	QColor GetDisassemblyTitleLineColor();
-	inline QString DisassemblyStringFromAddress(u32 address, QFont font, u32 pc, bool selected);
+	inline std::pair<QString, int> DisassemblyStringFromAddress(u32 address);
+	std::vector<DisasmLine> GetLines(u32 address, u32 size);
 	QColor GetAddressFunctionColor(u32 address);
 	enum class SelectionInfo
 	{
@@ -96,4 +119,6 @@ private:
 	void setInstructions(u32 start, u32 end, u32 value);
 	bool AddressCanRestore(u32 start, u32 end);
 	bool FunctionCanRestore(u32 address);
+
+	static constexpr u32 STARTING_ADDRESS = 0x100000;
 };

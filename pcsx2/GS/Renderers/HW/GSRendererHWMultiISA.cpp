@@ -545,20 +545,34 @@ bool GSRendererHWFunctions::SwPrimRender(GSRendererHW& hw, bool invalidate_tc, b
 	static_cast<GSSingleRasterizer*>(hw.m_sw_rasterizer.get())->Draw(data);
 
 	if (invalidate_tc)
-		g_texture_cache->InvalidateVideoMem(context->offset.fb, bbox);
+	{
+		GSOffset frame_offs = context->offset.fb;
+
+		if (GSLocalMemory::m_psm[context->FRAME.PSM].trbpp == 32 && context->FRAME.FBMSK)
+		{
+			if (context->FRAME.FBMSK == 0xFF000000)
+				frame_offs = GSRendererHW::GetInstance()->m_mem.GetOffset(context->FRAME.Block(), context->FRAME.FBW, PSMCT24);
+			else if (context->FRAME.FBMSK == 0x00FFFFFF)
+				frame_offs = GSRendererHW::GetInstance()->m_mem.GetOffset(context->FRAME.Block(), context->FRAME.FBW, PSMT8H);
+		}
+
+		g_texture_cache->InvalidateVideoMem(frame_offs, bbox);
+	}
 
 	// Jak does sw prim render, then draws to the same target, and it needs to be uploaded.
 	if (add_ee_transfer)
 	{
 		GSRendererHW::GSUploadQueue uq;
-		uq.transfer_type = GSRendererHW::GetInstance()->EEGS_TransferType::EE_to_GS;
+		uq.transfer_type = GSState::EEGS_TransferType::EE_to_GS;
 		uq.blit.U64 = 0;
 		uq.blit.DBP = hw.m_cached_ctx.FRAME.Block();
 		uq.blit.DBW = hw.m_cached_ctx.FRAME.FBW;
 		uq.blit.DPSM = hw.m_cached_ctx.FRAME.PSM;
 		uq.draw = GSState::s_n;
 		uq.rect = bbox;
+		uq.was_hardware_only = false;
 		hw.m_draw_transfers.push_back(uq);
+		GSState::s_last_transfer_draw_n = GSState::s_n;
 	}
 
 	return true;

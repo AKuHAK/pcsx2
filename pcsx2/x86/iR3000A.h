@@ -16,6 +16,8 @@ static const int psxInstCycles_Peephole_Store = 0;
 static const int psxInstCycles_Store = 0;
 static const int psxInstCycles_Load = 0;
 
+#define R3000A_TEXTPTR (&psxRegs.GPR.r[33])
+
 // to be consistent with EE
 #define PSX_HI XMMGPR_HI
 #define PSX_LO XMMGPR_LO
@@ -31,7 +33,7 @@ void _psxFlushAllDirty();
 
 void _psxOnWriteReg(int reg);
 
-void _psxMoveGPRtoR(const x86Emitter::xRegister32& to, int fromgpr);
+void _psxMoveGPRtoR(const x86Emitter::xRegister32& to, int fromgpr, bool allow_preload = true);
 void _psxMoveGPRtoM(uptr to, int fromgpr);
 
 extern u32 psxpc; // recompiler pc

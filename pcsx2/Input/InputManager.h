@@ -52,7 +52,8 @@ enum class InputLayout : u8
 	Unknown,
 	Xbox,
 	Playstation,
-	Nintendo
+	Nintendo,
+	Generic
 };
 
 enum class InputModifier : u32
@@ -271,7 +272,9 @@ namespace InputManager
 
 	/// Updates internal state for any binds for this key, and fires callbacks as needed.
 	/// Returns true if anything was bound to this key, otherwise false.
-	bool InvokeEvents(InputBindingKey key, float value, GenericInputBinding generic_key = GenericInputBinding::Unknown);
+	bool InvokeEvents(InputBindingKey key, float value, GenericInputBinding generic_key = GenericInputBinding::Unknown,
+		GenericInputBinding axis_neg_key = GenericInputBinding::Unknown,
+		GenericInputBinding axis_pos_key = GenericInputBinding::Unknown);
 
 	/// Clears internal state for any binds with a matching source/index.
 	void ClearBindStateFromSource(InputBindingKey key);
@@ -290,6 +293,10 @@ namespace InputManager
 	/// Intensity is normalized from 0 to 1.
 	void SetUSBVibrationIntensity(u32 port, float large_or_single_motor_intensity, float small_motor_intensity);
 	void SetPadVibrationIntensity(u32 pad_index, float large_or_single_motor_intensity, float small_motor_intensity);
+
+	/// Returns the current vibration intensity for the given pad index.
+	/// Large motor is index 0, small motor is index 1.
+	std::pair<float, float> GetPadVibrationIntensity(u32 pad_index);
 
 	/// Zeros all vibration intensities. Call when pausing.
 	/// The pad vibration state will internally remain, so that when emulation is unpaused, the effect resumes.

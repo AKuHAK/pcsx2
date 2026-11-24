@@ -180,6 +180,7 @@
     </ClCompile>
     <ClCompile Include="ColorPickerButton.cpp" />
     <ClCompile Include="Themes.cpp" />
+    <ClCompile Include="ToolbarCustomizationDialog.cpp" />
     <ClCompile Include="Settings\GamePatchSettingsWidget.cpp">
       <Filter>Settings</Filter>
     </ClCompile>
@@ -435,6 +436,7 @@
     </QtMoc>
     <QtMoc Include="ColorPickerButton.h" />
     <QtMoc Include="SetupWizardDialog.h" />
+    <QtMoc Include="ToolbarCustomizationDialog.h" />
     <QtMoc Include="Settings\GameCheatSettingsWidget.h">
       <Filter>Settings</Filter>
     </QtMoc>
@@ -529,6 +531,9 @@
     <QtMoc Include="Debugger\ModuleView.h">
       <Filter>Debugger</Filter>
     </QtMoc>
+    <QtMoc Include="Debugger\NavigationHistoryStack.h">
+      <Filter>Debugger</Filter>
+    </QtMoc>
     <QtMoc Include="Debugger\ModuleModel.h">
       <Filter>Debugger</Filter>
     </QtMoc>
@@ -597,6 +602,9 @@
       <Filter>Settings</Filter>
     </QtUi>
     <QtUi Include="Settings\ControllerBindingWidget.ui">
+      <Filter>Settings</Filter>
+    </QtUi>
+    <QtUi Include="Settings\ControllerBindingWidget_DualShock1.ui">
       <Filter>Settings</Filter>
     </QtUi>
     <QtUi Include="Settings\ControllerBindingWidget_DualShock2.ui">
@@ -782,6 +790,7 @@
     <QtUi Include="MainWindow.ui" />
     <QtUi Include="SetupWizardDialog.ui" />
     <QtUi Include="ShortcutCreationDialog.ui" />
+    <QtUi Include="ToolbarCustomizationDialog.ui" />
     <QtUi Include="Debugger\StackView.ui">
       <Filter>Debugger</Filter>
     </QtUi>

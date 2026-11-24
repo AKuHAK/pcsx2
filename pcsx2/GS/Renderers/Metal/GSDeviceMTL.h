@@ -74,7 +74,7 @@ struct PipelineSelectorMTL
 	GSHWDrawConfig::PSSelector ps;
 	PipelineSelectorExtrasMTL extras;
 	GSHWDrawConfig::VSSelector vs;
-	u8 pad[7];
+	u8 pad[3];
 	PipelineSelectorMTL()
 	{
 		memset(this, 0, sizeof(*this));
@@ -248,10 +248,9 @@ public:
 	MRCOwned<id<MTLFence>> m_spin_fence;
 
 	// Functions and Pipeline States
-	MRCOwned<id<MTLComputePipelineState>> m_cas_pipeline[2];
-	MRCOwned<id<MTLRenderPipelineState>> m_convert_pipeline[static_cast<int>(ShaderConvert::Count)];
+	MRCOwned<id<MTLRenderPipelineState>> m_cas_pipeline[2];
+	std::vector<MRCOwned<id<MTLRenderPipelineState>>> m_convert_pipeline;
 	MRCOwned<id<MTLRenderPipelineState>> m_present_pipeline[static_cast<int>(PresentShader::Count)];
-	MRCOwned<id<MTLRenderPipelineState>> m_convert_pipeline_copy_mask[1 << 5];
 	MRCOwned<id<MTLRenderPipelineState>> m_merge_pipeline[4];
 	MRCOwned<id<MTLRenderPipelineState>> m_interlace_pipeline[NUM_INTERLACE_SHADERS];
 	MRCOwned<id<MTLRenderPipelineState>> m_datm_pipeline[4];
@@ -265,11 +264,22 @@ public:
 	MRCOwned<id<MTLRenderPipelineState>> m_shadeboost_pipeline;
 	MRCOwned<id<MTLRenderPipelineState>> m_imgui_pipeline;
 
+	id<MTLRenderPipelineState> GetConvertPipeline(ShaderConvertSelector shader) const
+	{
+		return m_convert_pipeline[shader.Index()];
+	}
+
+	id<MTLRenderPipelineState> GetConvertPipeline(ShaderConvert shader) const
+	{
+		return m_convert_pipeline[ShaderConvertSelector(shader).Index()];
+	}
+
 	MRCOwned<id<MTLFunction>> m_hw_vs[6 << 3];
 	std::unordered_map<PSSelector, MRCOwned<id<MTLFunction>>> m_hw_ps;
 	std::unordered_map<PipelineSelectorMTL, MRCOwned<id<MTLRenderPipelineState>>> m_hw_pipeline;
 
 	MRCOwned<MTLRenderPassDescriptor*> m_render_pass_desc[16];
+	MRCOwned<MTLRenderPassDescriptor*> m_full_rov_render_pass_desc;
 
 	MRCOwned<id<MTLSamplerState>> m_sampler_hw[1 << 8];
 
@@ -307,12 +317,14 @@ public:
 		// Clear line (Things below here are tracked by `has` and don't need to be cleared to reset)
 		SamplerSelector sampler_sel;
 		u8 blend_color;
+		struct { u32 w, h; } full_rov_size;
 		GSVector4i scissor;
 		PipelineSelectorMTL pipeline_sel;
 		GSHWDrawConfig::VSConstantBuffer cb_vs;
 		GSHWDrawConfig::PSConstantBuffer cb_ps;
 		MainRenderEncoder(const MainRenderEncoder&) = delete;
 		MainRenderEncoder() = default;
+		bool is_full_rov() const { return encoder && !color_target && !depth_target && !stencil_target; }
 	} m_current_render;
 	MRCOwned<id<MTLCommandBuffer>> m_texture_upload_cmdbuf;
 	MRCOwned<id<MTLBlitCommandEncoder>> m_texture_upload_encoder;
@@ -321,6 +333,8 @@ public:
 	MRCOwned<id<MTLBlitCommandEncoder>> m_vertex_upload_encoder;
 	id<MTLTexture> m_ds_as_rt_texture = nil;
 	GSTexture* m_ds_as_rt_gstexture = nullptr;
+	MRCOwned<id<MTLTexture>> m_rov_dummy_texture;
+	struct { u32 w, h; } m_rov_dummy_texture_size = {};
 
 	struct DebugEntry
 	{
@@ -363,15 +377,19 @@ public:
 	void FlushEncodersForReadback();
 	/// End current render pass without flushing
 	void EndRenderPass();
+	/// Prepare to begin a new render pass
+	void PrepareBeginRenderPass();
 	/// Begin a new render pass (may reuse existing)
 	void BeginRenderPass(NSString* name, GSTexture* color, MTLLoadAction color_load, GSTexture* depth, MTLLoadAction depth_load, GSTexture* stencil = nullptr, MTLLoadAction stencil_load = MTLLoadActionDontCare, bool rt1 = false);
+	/// Begin a new full-ROV render pass (may reuse existing)
+	void BeginFullROV(NSString* name, uint32_t width, uint32_t height);
 	/// Call at the end of each frame
 	void FrameCompleted();
 
-	GSTexture* CreateSurface(GSTexture::Type type, int width, int height, int levels, GSTexture::Format format) override;
+	GSTexture* CreateSurface(GSTexture::Usage usage, int width, int height, int levels, GSTexture::Format format) override;
 
-	void DoMerge(GSTexture* sTex[3], GSVector4* sRect, GSTexture* dTex, GSVector4* dRect, const GSRegPMODE& PMODE, const GSRegEXTBUF& EXTBUF, u32 c, const bool linear) override;
-	void DoInterlace(GSTexture* sTex, const GSVector4& sRect, GSTexture* dTex, const GSVector4& dRect, ShaderInterlace shader, bool linear, const InterlaceConstantBuffer& cb) override;
+	void DoMerge(GSTexture* sTex[3], GSVector4* sRect, GSTexture* dTex, GSVector4* dRect, const GSRegPMODE& PMODE, const GSRegEXTBUF& EXTBUF, u32 c, const Filter filter) override;
+	void DoInterlace(GSTexture* sTex, const GSVector4& sRect, GSTexture* dTex, const GSVector4& dRect, ShaderInterlace shader, Filter filter, const InterlaceConstantBuffer& cb) override;
 	void DoFXAA(GSTexture* sTex, GSTexture* dTex) override;
 	void DoShadeBoost(GSTexture* sTex, GSTexture* dTex, const float params[4]) override;
 
@@ -405,18 +423,21 @@ public:
 	float GetAndResetAccumulatedGPUTime() override;
 	void AccumulateCommandBufferTime(id<MTLCommandBuffer> buffer);
 
+	bool SetGPUPipelineStatisticsEnabled(bool enabled) override { return false; }
+	GPUPipelineStatistics GetAndResetAccumulatedGPUPipelineStatistics() override { return {}; }
+
 	std::unique_ptr<GSDownloadTexture> CreateDownloadTexture(u32 width, u32 height, GSTexture::Format format) override;
 
 	void ClearSamplerCache() override;
 
 	void CopyRect(GSTexture* sTex, GSTexture* dTex, const GSVector4i& r, u32 destX, u32 destY) override;
 	void BeginStretchRect(NSString* name, GSTexture* dTex, MTLLoadAction action);
-	void DoStretchRect(GSTexture* sTex, const GSVector4& sRect, GSTexture* dTex, const GSVector4& dRect, id<MTLRenderPipelineState> pipeline, bool linear, LoadAction load_action, const void* frag_uniform, size_t frag_uniform_len);
+	void DoStretchRect(GSTexture* sTex, const GSVector4& sRect, GSTexture* dTex, const GSVector4& dRect, id<MTLRenderPipelineState> pipeline, std::optional<Filter> filter, LoadAction load_action, const void* frag_uniform, size_t frag_uniform_len);
 	void DrawStretchRect(const GSVector4& sRect, const GSVector4& dRect, const GSVector2& ds);
 	/// Copy from a position in sTex to the same position in the currently active render encoder using the given fs pipeline and rect
 	void RenderCopy(GSTexture* sTex, id<MTLRenderPipelineState> pipeline, const GSVector4i& rect);
-	void PresentRect(GSTexture* sTex, const GSVector4& sRect, GSTexture* dTex, const GSVector4& dRect, PresentShader shader, float shaderTime, bool linear) override;
-	void DrawMultiStretchRects(const MultiStretchRect* rects, u32 num_rects, GSTexture* dTex, ShaderConvert shader) override;
+	void PresentRect(GSTexture* sTex, const GSVector4& sRect, GSTexture* dTex, const GSVector4& dRect, PresentShader shader, float shaderTime, Filter filter) override;
+	void DrawMultiStretchRects(const MultiStretchRect* rects, u32 num_rects, GSTexture* dTex, ShaderConvertSelector shader) override;
 	void UpdateCLUTTexture(GSTexture* sTex, float sScale, u32 offsetX, u32 offsetY, GSTexture* dTex, u32 dOffset, u32 dSize) override;
 	void ConvertToIndexedTexture(GSTexture* sTex, float sScale, u32 offsetX, u32 offsetY, u32 SBW, u32 SPSM, GSTexture* dTex, u32 DBW, u32 DPSM) override;
 	void FilteredDownsampleTexture(GSTexture* sTex, GSTexture* dTex, u32 downsample_factor, const GSVector2i& clamp_min, const GSVector4& dRect) override;
@@ -430,6 +451,7 @@ public:
 	void MRESetDSS(id<MTLDepthStencilState> dss);
 	void MRESetSampler(SamplerSelector sel);
 	void MRESetTexture(GSTexture* tex, int pos);
+	void MRESetTexture(id<MTLTexture> tex, int pos);
 	void MRESetVertices(id<MTLBuffer> buffer, size_t offset);
 	void MRESetVSIndices(id<MTLBuffer> buffer, size_t offset);
 	void MRESetScissor(const GSVector4i& scissor);
@@ -443,6 +465,7 @@ public:
 	// MARK: Render HW
 
 	void SetupDestinationAlpha(GSTexture* rt, GSTexture* ds, const GSVector4i& r, SetDATM datm);
+	void PrepareROVTexture(GSTexture** ptex);
 	void RenderHW(GSHWDrawConfig& config) override;
 	void SendHWDraw(GSHWDrawConfig& config, id<MTLRenderCommandEncoder> enc, id<MTLBuffer> buffer, size_t off,
 		bool one_barrier, bool full_barrier);
@@ -462,8 +485,9 @@ public:
 	u32 FrameNo() const { return m_frame; }
 
 protected:
+	using GSDevice::DoStretchRect; // Suppress overloaded virtual function warning
 	virtual void DoStretchRect(GSTexture* sTex, const GSVector4& sRect, GSTexture* dTex, const GSVector4& dRect,
-		GSHWDrawConfig::ColorMaskSelector cms, ShaderConvert shader, bool linear) override;
+		ShaderConvertSelector shader, Filter filter) override;
 };
 
 static constexpr bool IsCommandBufferCompleted(MTLCommandBufferStatus status)

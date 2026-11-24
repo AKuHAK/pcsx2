@@ -63,37 +63,6 @@ void DebugInterface::resumeCpu()
 	VMManager::SetPaused(false);
 }
 
-char* DebugInterface::stringFromPointer(u32 p)
-{
-	const int BUFFER_LEN = 64;
-	static char buf[BUFFER_LEN] = {0};
-
-	if (!isValidAddress(p))
-		return NULL;
-
-	// This is going to blow up if it hits a TLB miss..
-	// Hopefully the checks in isValidAddress() are sufficient.
-	for (u32 i = 0; i < BUFFER_LEN; i++)
-	{
-		char c = Read8(p + i);
-		buf[i] = c;
-
-		if (c == 0)
-		{
-			return i > 0 ? buf : NULL;
-		}
-		else if (c < 0x20 || c >= 0x7f)
-		{
-			// non printable character
-			return NULL;
-		}
-	}
-
-	buf[BUFFER_LEN - 1] = 0;
-	buf[BUFFER_LEN - 2] = '~';
-	return buf;
-}
-
 std::optional<u32> DebugInterface::getCallerStackPointer(const ccc::Function& currentFunction)
 {
 	u32 sp = getRegister(EECAT_GPR, 29);
@@ -153,7 +122,7 @@ bool DebugInterface::initExpression(const char* exp, PostfixExpression& dest, st
 	return initPostfixExpression(exp, &funcs, dest, error);
 }
 
-bool DebugInterface::parseExpression(PostfixExpression& exp, u64& dest, std::string& error)
+bool DebugInterface::parseExpression(const PostfixExpression& exp, u64& dest, std::string& error)
 {
 	MipsExpressionFunctions funcs(this, nullptr, false);
 	return parsePostfixExpression(exp, &funcs, dest, error);
@@ -336,12 +305,12 @@ bool R5900DebugInterface::Write128(u32 address, u128 value)
 	return isValidAddress(address) && vtlb_memSafeWriteBytes(address, &value, sizeof(value));
 }
 
-bool R5900DebugInterface::WriteBytes(u32 address, void* src, u32 size)
+bool R5900DebugInterface::WriteBytes(u32 address, const void* src, u32 size)
 {
 	return vtlb_memSafeWriteBytes(address, src, size);
 }
 
-bool R5900DebugInterface::CompareBytes(u32 address, void* src, u32 size)
+bool R5900DebugInterface::CompareBytes(u32 address, const void* src, u32 size)
 {
 	return vtlb_memSafeCmpBytes(address, src, size) == 0;
 }
@@ -498,7 +467,7 @@ u128 R5900DebugInterface::getRegister(int cat, int num)
 			result = u128::From32(fpuRegs.fpr[num].UL);
 			break;
 		case EECAT_FCR:
-			result = u128::From32(fpuRegs.fprc[num]);
+			result = u128::From32(num >= 16 ? fpuRegs.fcr31 : FPU_REVISION);
 			break;
 		case EECAT_VU0F:
 			switch (num)
@@ -596,7 +565,8 @@ void R5900DebugInterface::setRegister(int cat, int num, u128 newValue)
 			fpuRegs.fpr[num].UL = newValue._u32[0];
 			break;
 		case EECAT_FCR:
-			fpuRegs.fprc[num] = newValue._u32[0];
+			if (num == 31)
+				fpuRegs.fcr31 = newValue._u32[0];
 			break;
 		case EECAT_VU0F:
 			switch (num)
@@ -708,21 +678,26 @@ std::vector<std::unique_ptr<BiosThread>> R5900DebugInterface::GetThreadList() co
 	return getEEThreads();
 }
 
-std::vector<MipsStackWalk::StackFrame> R5900DebugInterface::StackTrace(const BiosThread& thread)
+std::vector<MipsStackWalk::StackFrame> R5900DebugInterface::StackTrace(const BiosThread* thread)
 {
-	if (thread.Status() == ThreadStatus::THS_RUN)
+	if (!thread)
 	{
-		return MipsStackWalk::Walk(this, getPC(), getRegister(0, 31), getRegister(0, 29),
-			thread.EntryPoint());
+		return MipsStackWalk::Walk(this, getPC(), getRegister(0, 31), getRegister(0, 29), 0);
 	}
 
-	EEInternalCtx* ctx = static_cast<EEInternalCtx*>(PSM(thread.RegCtx()));
-	u32 pc = thread.PC();
+	if (thread->Status() == ThreadStatus::THS_RUN)
+	{
+		return MipsStackWalk::Walk(this, getPC(), getRegister(0, 31), getRegister(0, 29),
+			thread->EntryPoint());
+	}
+
+	EEInternalCtx* ctx = static_cast<EEInternalCtx*>(PSM(thread->RegCtx()));
+	u32 pc = thread->PC();
 	// $zero is not in the array so subtract 1
 	u32 ra = ctx->gpr[31 - 1]._u32[0];
 	u32 sp = ctx->gpr[29 - 1]._u32[0];
 
-	return MipsStackWalk::Walk(this, pc, ra, sp, thread.EntryPoint());
+	return MipsStackWalk::Walk(this, pc, ra, sp, thread->EntryPoint());
 }
 
 std::vector<IopMod> R5900DebugInterface::GetModuleList() const
@@ -839,12 +814,12 @@ bool R3000DebugInterface::Write128(u32 address, u128 value)
 	return true;
 }
 
-bool R3000DebugInterface::WriteBytes(u32 address, void* src, u32 size)
+bool R3000DebugInterface::WriteBytes(u32 address, const void* src, u32 size)
 {
 	return iopMemSafeWriteBytes(address, src, size);
 }
 
-bool R3000DebugInterface::CompareBytes(u32 address, void* src, u32 size)
+bool R3000DebugInterface::CompareBytes(u32 address, const void* src, u32 size)
 {
 	return iopMemSafeCmpBytes(address, src, size) == 0;
 }
@@ -1066,20 +1041,25 @@ std::vector<std::unique_ptr<BiosThread>> R3000DebugInterface::GetThreadList() co
 	return getIOPThreads();
 }
 
-std::vector<MipsStackWalk::StackFrame> R3000DebugInterface::StackTrace(const BiosThread& thread)
+std::vector<MipsStackWalk::StackFrame> R3000DebugInterface::StackTrace(const BiosThread* thread)
 {
-	if (thread.Status() == ThreadStatus::THS_RUN)
+	if (!thread)
 	{
-		return MipsStackWalk::Walk(this, getPC(), getRegister(0, 31), getRegister(0, 29),
-			thread.EntryPoint());
+		return MipsStackWalk::Walk(this, getPC(), getRegister(0, 31), getRegister(0, 29), 0);
 	}
 
-	u32 p = thread.RegCtx();
+	if (thread->Status() == ThreadStatus::THS_RUN)
+	{
+		return MipsStackWalk::Walk(this, getPC(), getRegister(0, 31), getRegister(0, 29),
+			thread->EntryPoint());
+	}
+
+	u32 p = thread->RegCtx();
 	u32 pc = Read32(p + 0x8c);
 	u32 ra = Read32(p + 0x7c);
 	u32 sp = Read32(p + 0x74);
 
-	return MipsStackWalk::Walk(this, pc, ra, sp, thread.EntryPoint());
+	return MipsStackWalk::Walk(this, pc, ra, sp, thread->EntryPoint());
 }
 
 std::vector<IopMod> R3000DebugInterface::GetModuleList() const
@@ -1185,12 +1165,12 @@ bool ElfMemoryReader::Write128(u32 address, u128 value)
 	return false;
 }
 
-bool ElfMemoryReader::WriteBytes(u32 address, void* src, u32 size)
+bool ElfMemoryReader::WriteBytes(u32 address, const void* src, u32 size)
 {
 	return false;
 }
 
-bool ElfMemoryReader::CompareBytes(u32 address, void* src, u32 size)
+bool ElfMemoryReader::CompareBytes(u32 address, const void* src, u32 size)
 {
 	std::optional<std::span<const u8>> bytes = m_elf.get_virtual(address, size);
 	if (!bytes.has_value())

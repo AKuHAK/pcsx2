@@ -32,6 +32,7 @@ struct VMBootParameters
 	std::string filename;
 	std::string elf_override;
 	std::string save_state;
+	std::string game_config;
 	std::optional<s32> state_index;
 	std::optional<CDVD_SourceType> source_type;
 
@@ -248,6 +249,9 @@ namespace VMManager
 	/// Returns the path for the game settings ini file for the specified CRC.
 	std::string GetGameSettingsPath(const std::string_view game_serial, u32 game_crc);
 
+	/// Returns true if a custom properties file exists for the game with the given serial and CRC.
+	bool AreGameSettingsPresent(const std::string_view game_serial, u32 game_crc);
+
 	/// Returns the ISO override for an ELF via gamesettings.
 	std::string GetDiscOverrideFromGameSettings(const std::string& elf_path);
 
@@ -309,6 +313,9 @@ namespace VMManager
 		/// Returns true if fast booting is active (requested but ELF not started).
 		bool IsFastBootInProgress();
 
+		// Returns the current disc/BIOS region, if set.
+		std::string GetCurrentRegion();
+
 		/// Disables fast boot if it was requested, and found to be incompatible.
 		void DisableFastBoot();
 
@@ -322,7 +329,7 @@ namespace VMManager
 		void FrameRateChanged();
 
 		/// Throttles execution, or limits the frame rate.
-		void Throttle();
+		void Throttle(bool vsync_start);
 
 		/// Resets/clears all execution/code caches.
 		void ClearCPUExecutionCaches();

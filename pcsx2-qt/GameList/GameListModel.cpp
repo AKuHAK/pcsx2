@@ -73,9 +73,10 @@ const char* GameListModel::getColumnName(const Column col)
 	return s_column_names[static_cast<int>(col)];
 }
 
-GameListModel::GameListModel(const float cover_scale, const bool show_cover_titles, const qreal dpr, QObject* parent /* = nullptr */)
+GameListModel::GameListModel(const float cover_scale, const bool show_cover_titles, bool show_full_cover_titles, const qreal dpr, QObject* parent /* = nullptr */)
 	: QAbstractTableModel(parent)
 	, m_show_titles_for_covers(show_cover_titles)
+	, m_show_full_titles_for_covers(show_full_cover_titles)
 	, m_dpr{dpr}
 {
 	loadSettings();
@@ -214,20 +215,6 @@ int GameListModel::columnCount(const QModelIndex& parent) const
 	return parent.isValid() ? 0 : Column_Count;
 }
 
-QString GameListModel::formatTimespan(const time_t timespan)
-{
-	// Avoid an extra string conversion over calling QString::fromStdString(GameList::FormatTimespan).
-	const u32 hours = static_cast<u32>(timespan / 3600);
-	if (hours > 0)
-		return qApp->translate("GameList", "%n hours", "", hours);
-
-	const u32 minutes = static_cast<u32>((timespan % 3600) / 60);
-	if (minutes > 0)
-		return qApp->translate("GameList", "%n minutes", "", minutes);
-	else
-		return qApp->translate("GameList", "%n seconds", "", static_cast<u32>((timespan % 3600) % 60));
-}
-
 QVariant GameListModel::data(const QModelIndex& index, const int role) const
 {
 	if (!index.isValid())
@@ -241,6 +228,10 @@ QVariant GameListModel::data(const QModelIndex& index, const int role) const
 	const GameList::Entry* ge = GameList::GetEntryByIndex(row);
 	if (!ge)
 		return QVariant();
+	if (role == FavoriteRole)
+		return ge->is_favorite;
+	if (role == CustomSettingsRole)
+		return ge->has_custom_settings;
 
 	// See: https://doc.qt.io/qt-6/qt.html#ItemDataRole-enum
 	switch (role)
@@ -262,7 +253,7 @@ QVariant GameListModel::data(const QModelIndex& index, const int role) const
 					return QString::fromStdString(fmt::format("{:08X}", ge->crc));
 
 				case Column_TimePlayed:
-					return ge->total_played_time ? formatTimespan(ge->total_played_time) : QVariant();
+					return QString::fromStdString(GameList::FormatTimespan(ge->total_played_time));
 
 				case Column_LastPlayed:
 					return QString::fromStdString(GameList::FormatTimestamp(ge->last_played_time));
@@ -282,6 +273,19 @@ QVariant GameListModel::data(const QModelIndex& index, const int role) const
 		{
 			switch (index.column())
 			{
+				case Column_Title:
+				{
+					QPixmap title_decor = QPixmap(40, 20);
+					title_decor.fill(Qt::transparent);
+					QPainter painter(&title_decor);
+					if (ge->is_favorite)
+						painter.drawPixmap(0, 0, m_favorite_pixmap);
+					if (ge->has_custom_settings)
+						painter.drawPixmap(20, 0, m_custom_settings_pixmap);
+					painter.end();
+					return title_decor;
+				}
+
 				case Column_Type:
 					return m_type_pixmaps[static_cast<u32>(ge->type)];
 
@@ -315,9 +319,33 @@ QVariant GameListModel::data(const QModelIndex& index, const int role) const
 			switch (index.column())
 			{
 				case Column_Cover:
-					return QSize(static_cast<int>(static_cast<float>(SIZE_HINT_WIDTH) * m_cover_scale),
-						static_cast<int>(static_cast<float>(m_show_titles_for_covers ? SIZE_HINT_HEIGHT_TITLES : SIZE_HINT_HEIGHT) * m_cover_scale));
+				{
+					const int cover_width = static_cast<int>(static_cast<float>(SIZE_HINT_WIDTH) * m_cover_scale);
+					const int cover_height = static_cast<int>(static_cast<float>(SIZE_HINT_HEIGHT) * m_cover_scale);
 
+					if (m_show_full_titles_for_covers && m_show_titles_for_covers)
+					{
+						// Find height needed for the longest title at the current font/width
+						const int text_width = static_cast<int>(static_cast<float>(COVER_ART_WIDTH) * m_cover_scale);
+						QFont font;
+						font.setPointSizeF(20.0f * m_cover_scale); 
+						const QFontMetrics fm(font);
+						int max_text_height = fm.height();
+						const auto lock = GameList::GetLock();
+						const u32 count = GameList::GetEntryCount();
+						for (u32 i = 0; i < count; i++)
+						{
+							const GameList::Entry* entry = GameList::GetEntryByIndex(i);
+							if (!entry) continue;
+							const QString title = QString::fromStdString(entry->GetTitle(m_prefer_english_titles));
+							const QRect bound = fm.boundingRect(QRect(0, 0, text_width, 0),
+								Qt::TextWordWrap | Qt::AlignHCenter, title);
+							max_text_height = std::max(max_text_height, bound.height());
+						}
+						return QSize(cover_width, cover_height + max_text_height);
+					}
+					return QSize(cover_width, static_cast<int>(static_cast<float>(m_show_titles_for_covers ? SIZE_HINT_HEIGHT_TITLES : SIZE_HINT_HEIGHT) * m_cover_scale));
+				}
 				default:
 					return QVariant();
 			}
@@ -343,6 +371,21 @@ void GameListModel::refresh()
 	endResetModel();
 }
 
+void GameListModel::refreshDecorations(const std::string& path)
+{
+	const auto lock = GameList::GetLock();
+	const u32 count = GameList::GetEntryCount();
+	for (u32 row = 0; row < count; row++)
+	{
+		const GameList::Entry* entry = GameList::GetEntryByIndex(row);
+		if (entry && entry->path == path)
+		{
+			emit dataChanged(index(static_cast<int>(row), 0), index(static_cast<int>(row), Column_Count - 1));
+			break;
+		}
+	}
+}
+
 bool GameListModel::titlesLessThan(const int left_row, const int right_row) const
 {
 	if (left_row < 0 || left_row >= static_cast<int>(GameList::GetEntryCount()) || right_row < 0 ||
@@ -354,7 +397,7 @@ bool GameListModel::titlesLessThan(const int left_row, const int right_row) cons
 	const GameList::Entry* left = GameList::GetEntryByIndex(left_row);
 	const GameList::Entry* right = GameList::GetEntryByIndex(right_row);
 	return QtHost::LocaleSensitiveCompare(QString::fromStdString(left->GetTitleSort(m_prefer_english_titles)),
-			   QString::fromStdString(right->GetTitleSort(m_prefer_english_titles))) < 0;
+				QString::fromStdString(right->GetTitleSort(m_prefer_english_titles))) < 0;
 }
 
 bool GameListModel::lessThan(const QModelIndex& left_index, const QModelIndex& right_index, const int column) const
@@ -500,6 +543,9 @@ void GameListModel::loadCommonImages()
 	loadThemeSpecificImages();
 
 	const QString base_path(QtHost::GetResourcesBasePath());
+	m_favorite_pixmap = QIcon(QStringLiteral("%1/icons/star.svg").arg(base_path)).pixmap(QSize(20, 20), m_dpr);
+	m_custom_settings_pixmap = QIcon(QStringLiteral("%1/icons/gear.svg").arg(base_path)).pixmap(QSize(20, 20), m_dpr);
+
 	for (u32 rating = 1; rating < GameList::CompatibilityRatingCount; rating++)
 		m_compatibility_pixmaps[rating] = QIcon((QStringLiteral("%1/icons/star-%2.svg").arg(base_path).arg(rating - 1))).pixmap(QSize(88, 16), m_dpr);
 

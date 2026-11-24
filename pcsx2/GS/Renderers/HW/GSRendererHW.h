@@ -53,8 +53,14 @@ private:
 
 		__ri bool DepthWrite() const
 		{
-			if (TEST.ATE && TEST.ATST == ATST_NEVER &&
-				TEST.AFAIL != AFAIL_ZB_ONLY) // alpha test, all pixels fail, z buffer is not updated
+			// Alpha test, all pixels fail, z buffer is not updated.
+			if (TEST.ATE && TEST.ATST == ATST_NEVER && TEST.AFAIL != AFAIL_ZB_ONLY)
+			{
+				return false;
+			}
+
+			// Depth test enabled, all pixels fail.
+			if (TEST.ZTE && TEST.ZTST == ZTST_NEVER)
 			{
 				return false;
 			}
@@ -85,7 +91,7 @@ private:
 	u32 GetConstantDirectWriteMemClearColor() const;
 	u32 GetConstantDirectWriteMemClearDepth() const;
 	bool IsReallyDithered() const;
-	bool AreAnyPixelsDiscarded() const;
+	bool AreAnyPixelsDiscarded();
 	bool IsDiscardingDstColor();
 	bool IsDiscardingDstRGB();
 	bool IsDiscardingDstAlpha() const;
@@ -209,7 +215,7 @@ private:
 	void DrawPrims(GSTextureCache::Target* rt, GSTextureCache::Target* ds, GSTextureCache::Source* tex, const TextureMinMaxResult& tmm);
 
 	void ResetStates();
-	void HandleProvokingVertexFirst();
+	void HandleFlatShadedVertices();
 	void SetupIA(float target_scale, float sx, float sy, bool req_vert_backup, const bool no_rt);
 	void EmulateTextureShuffleAndFbmask(GSTextureCache::Target* rt, GSTextureCache::Source* tex);
 	u32 EmulateChannelShuffle(GSTextureCache::Target* src, bool test_only, GSTextureCache::Target* rt = nullptr);
@@ -230,7 +236,7 @@ private:
 	static void GetAlphaTestConfigPS(const u32 atst, const u8 aref, const bool invert_test, PS_ATST& ps_atst_out, float& aref_out);
 	void EmulateAlphaTest(DATEOptions& date_options);
 	void EmulateAlphaTestSecondPass();
-	void ConfigureDepthFeedback();
+	void ConfigureDepthFeedback(bool rov_depth = false);
 
 	void CalculateAlphaRange(GSTextureCache::Target* rt, GSTextureCache::Target* ds, DATEOptions& date_options,
 		int& blend_alpha_min, int& blend_alpha_max, int& rt_new_alpha_min, int& rt_new_alpha_max);
@@ -245,7 +251,13 @@ private:
 
 	void DetermineVSConfig(GSTextureCache::Target* rt, float rtscale, const GSVector2i& rtsize,
 		const GSVector2i& unscaled_size, float& vs_scale_x, float& vs_scale_y);
-	void DetermineBarriers(GSTextureCache::Target* rt);
+	void DetermineBarriers(GSTextureCache::Target* rt, GSTextureCache::Source* tex);
+
+	void GetForcedROVUsage(bool& color_cov, bool& depth_rov); // Whether having color or depth with the current config forces the other.
+	void DetermineROVUsage(GSTextureCache::Target* rt, GSTextureCache::Target* ds); // Heuristics to determine whether to enable/disable ROV
+	void ConfigureROV(bool color_rov, bool depth_rov); // Actual config for ROV
+	void ConvertTextureTypeROV(GSTextureCache::Target* rt, GSTextureCache::Target* ds); // Convert to RW capable textures if needed.
+	void ConvertTextureTypeROVSingle(GSTextureCache::Target* tgt, bool shader_write); // Helper to do the above.
 
 	void SetTCOffset();
 	bool NextDrawColClip() const;
@@ -324,6 +336,8 @@ private:
 
 	GSVector2i m_lod = {}; // Min & Max level of detail
 
+	GIFRegALPHA m_optimized_blend = {}; // Save for ROV setup
+
 	GSHWDrawConfig m_conf = {};
 	HWCachedCtx m_cached_ctx;
 
@@ -349,7 +363,8 @@ public:
 	bool VerifyIndices();
 	void ExpandLineIndices();
 	GSVector4 RealignTargetTextureCoordinate(const GSTextureCache::Source* tex);
-	GSVector4i ComputeBoundingBox(const GSVector2i& rtsize, float rtscale);
+	GSVector4i ComputeBoundingBoxRT(const GSVector2i& rtsize, float rtscale);
+	GSVector4i ComputeBoundingBoxTex(const GSVector2i& texsize, const GSVector4i& coverage, const GSVector4i& region, float texscale);
 	void MergeSprite(GSTextureCache::Source* tex);
 	float GetTextureScaleFactor() override;
 	GSVector2i GetValidSize(const GSTextureCache::Source* tex = nullptr, const bool is_shuffle = false);

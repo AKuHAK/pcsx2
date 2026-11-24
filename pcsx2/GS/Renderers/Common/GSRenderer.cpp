@@ -87,12 +87,6 @@ bool GSRenderer::Merge(int field)
 	int y_offset[3] = { 0, 0, 0 };
 	const bool feedback_merge = m_regs->EXTWRITE.WRITE == 1;
 
-	if (!PCRTCDisplays.PCRTCDisplays[0].enabled && !PCRTCDisplays.PCRTCDisplays[1].enabled)
-	{
-		m_real_size = GSVector2i(0, 0);
-		return false;
-	}
-
 	// Need to do this here, if the user has Anti-Blur enabled, these offsets can get wiped out/changed.
 	const bool game_deinterlacing = (PCRTCDisplays.PCRTCDisplays[0].prevFramebufferOffsets.y != PCRTCDisplays.PCRTCDisplays[0].framebufferOffsets.y) !=
 	                                (PCRTCDisplays.PCRTCDisplays[1].prevFramebufferOffsets.y != PCRTCDisplays.PCRTCDisplays[1].framebufferOffsets.y);
@@ -136,8 +130,6 @@ bool GSRenderer::Merge(int field)
 
 	if (!tex[0] && !tex[1])
 	{
-		m_real_size = GSVector2i(0, 0);
-
 		// Clear out the MAD buffer as some remnants of the previously shown frame came be left over, causing a flash for one frame.
 		if (GSConfig.InterlaceMode == GSInterlaceMode::Automatic || GSConfig.InterlaceMode >= GSInterlaceMode::AdaptiveTFF)
 		{
@@ -149,13 +141,19 @@ bool GSRenderer::Merge(int field)
 				mad_tex = nullptr;
 			}
 		}
-		return false;
+
+		// Both circuits off still outputs BGCOLOR on real hardware.
+		if (PCRTCDisplays.PCRTCDisplays[0].enabled || PCRTCDisplays.PCRTCDisplays[1].enabled)
+		{
+			m_real_size = GSVector2i(0, 0);
+			return false;
+		}
 	}
 
-	s_n++;
+	IncDraw();
 
-	GSVector4 src_gs_read[2];
-	GSVector4 dst[3];
+	GSVector4 src_gs_read[2] = {};
+	GSVector4 dst[3] = {};
 
 	// Use offset for bob deinterlacing always, extra offset added later for FFMD mode.
 	const bool scanmask_frame = m_scanmask_used && abs(PCRTCDisplays.PCRTCDisplays[0].displayRect.y - PCRTCDisplays.PCRTCDisplays[1].displayRect.y) != 1;
@@ -226,7 +224,7 @@ bool GSRenderer::Merge(int field)
 
 	m_real_size = GSVector2i(fs.x, fs.y);
 
-	if ((tex[0] == tex[1]) && (src_gs_read[0] == src_gs_read[1]).alltrue() && (dst[0] == dst[1]).alltrue() &&
+	if ((tex[0] || tex[1]) && (tex[0] == tex[1]) && (src_gs_read[0] == src_gs_read[1]).alltrue() && (dst[0] == dst[1]).alltrue() &&
 		(PCRTCDisplays.PCRTCDisplays[0].displayRect == PCRTCDisplays.PCRTCDisplays[1].displayRect).alltrue() &&
 		(PCRTCDisplays.PCRTCDisplays[0].framebufferRect == PCRTCDisplays.PCRTCDisplays[1].framebufferRect).alltrue() &&
 		!feedback_merge && !m_regs->PMODE.SLBG)
@@ -238,7 +236,7 @@ bool GSRenderer::Merge(int field)
 	const u32 c = (m_regs->BGCOLOR.U32[0] & 0x00FFFFFFu) | (m_regs->PMODE.ALP << 24);
 	g_gs_device->Merge(tex, src_gs_read, dst, fs, m_regs->PMODE, m_regs->EXTBUF, c);
 
-	if (isReallyInterlaced() && GSConfig.InterlaceMode != GSInterlaceMode::Off)
+	if ((tex[0] || tex[1]) && isReallyInterlaced() && GSConfig.InterlaceMode != GSInterlaceMode::Off)
 	{
 		const float offset = is_bob ? (tex[1] ? tex_scale[1] : tex_scale[0]) : 0.0f;
 
@@ -526,6 +524,9 @@ bool GSRenderer::BeginPresentFrame(bool frame_skip)
 {
 	Host::BeginPresentFrame();
 
+	if (GSDumpReplayer::IsReplayingDump())
+		GSDumpReplayer::UpdateGSStats();
+
 	const GSDevice::PresentResult res = g_gs_device->BeginPresent(frame_skip);
 	if (res == GSDevice::PresentResult::FrameSkipped)
 	{
@@ -634,6 +635,7 @@ void GSRenderer::VSync(u32 field, bool registers_written, bool idle_frame)
 
 	m_last_draw_n = s_n;
 	m_last_transfer_n = s_transfer_n;
+	m_background_blurred = false;
 
 	// Skip presentation when running uncapped while vsync is on.
 	if (skip_frame || g_gs_device->ShouldSkipPresentingFrame())
@@ -653,7 +655,7 @@ void GSRenderer::VSync(u32 field, bool registers_written, bool idle_frame)
 		if ((g_perfmon.GetFrame() & 0x1f) == 0)
 			g_perfmon.Update();
 
-		// Little bit ugly, but we can't do CAS inside the render pass.
+		// Little bit ugly, but we can't do CAS or background blur inside the render pass.
 		GSVector4i src_rect;
 		GSVector4 src_uv, draw_rect;
 		GSTexture* current = g_gs_device->GetCurrent();
@@ -666,7 +668,9 @@ void GSRenderer::VSync(u32 field, bool registers_written, bool idle_frame)
 				GetVideoMode() == GSVideoMode::SDTV_480P);
 			s_last_draw_rect = draw_rect;
 
-			if (GSConfig.CASMode != GSCASMode::Disabled)
+			const float blur_scale = FullscreenUI::GetBackgroundBlurScale();
+			m_background_blurred = blur_scale > 0.0f && g_gs_device->GaussianBlur(current, src_uv, draw_rect, blur_scale, true);
+			if (!m_background_blurred && GSConfig.CASMode != GSCASMode::Disabled)
 			{
 				static bool cas_log_once = false;
 				if (g_gs_device->Features().cas_sharpening)
@@ -695,13 +699,15 @@ void GSRenderer::VSync(u32 field, bool registers_written, bool idle_frame)
 				const float shader_time = static_cast<float>(Common::Timer::ConvertValueToSeconds(current_time - m_shader_time_start));
 
 				g_gs_device->PresentRect(current, src_uv, nullptr, draw_rect,
-					s_tv_shader_indices[GSConfig.TVShader], shader_time, GSConfig.LinearPresent != GSPostBilinearMode::Off);
+					s_tv_shader_indices[GSConfig.TVShader], shader_time,
+					BilnIf(m_background_blurred || GSConfig.LinearPresent != GSPostBilinearMode::Off));
 			}
 
 			EndPresentFrame();
 
-			if (GSConfig.OsdShowGPU || GSDumpReplayer::IsReplayingDump())
-				PerformanceMetrics::OnGPUPresent(g_gs_device->GetAndResetAccumulatedGPUTime());
+			const float gpu_time = g_gs_device->GetAndResetAccumulatedGPUTime();
+			GPUPipelineStatistics gpu_stats = g_gs_device->GetAndResetAccumulatedGPUPipelineStatistics();
+			PerformanceMetrics::OnGPUPresent(gpu_time, gpu_stats.vs_invocations, gpu_stats.ps_invocations);
 		}
 
 		PerformanceMetrics::Update(registers_written, fb_sprite_frame, false);
@@ -806,6 +812,10 @@ void GSRenderer::VSync(u32 field, bool registers_written, bool idle_frame)
 		}
 	}
 
+	// metrics
+	if (m_saving_metrics && !PerformanceMetrics::IsSavingMetrics())
+		DumpSavedMetrics();
+
 	// capture
 	if (GSCapture::IsCapturingVideo())
 	{
@@ -818,7 +828,7 @@ void GSRenderer::VSync(u32 field, bool registers_written, bool idle_frame)
 				GSTexture* temp = g_gs_device->CreateRenderTarget(size.x, size.y, GSTexture::Format::Color, false);
 				if (temp)
 				{
-					g_gs_device->StretchRect(current, temp, GSVector4(0, 0, size.x, size.y));
+					g_gs_device->StretchRect(current, temp, GSVector4(0, 0, size.x, size.y), ShaderConvert::COPY, Biln);
 					GSCapture::DeliverVideoFrame(temp);
 					g_gs_device->Recycle(temp);
 				}
@@ -954,25 +964,56 @@ void GSRenderer::StopGSDump()
 	m_dump_frames = 0;
 }
 
+void GSRenderer::StartSavingMetrics(u32 seconds)
+{
+	m_saving_metrics = true;
+	PerformanceMetrics::StartSavingMetrics(seconds);
+	Host::AddKeyedOSDMessage("GSMetrics",
+		fmt::format(TRANSLATE_FS("GS", "Started saving performance metrics{}"),
+			(0 < seconds && seconds < UINT32_MAX) ? fmt::format(" ({} seconds)", seconds) : ""),
+		Host::OSD_INFO_DURATION);
+}
+
+void GSRenderer::DumpSavedMetrics()
+{
+	m_saving_metrics = false;
+	PerformanceMetrics::DumpSavedMetrics();
+	Host::AddKeyedOSDMessage("GSMetrics", fmt::format(TRANSLATE_FS("GS", "Logging saved performance metrics")),
+		Host::OSD_INFO_DURATION);
+}
+
+bool GSRenderer::IsSavingMetrics()
+{
+	return m_saving_metrics;
+}
+
 void GSRenderer::PresentCurrentFrame()
 {
+	GSTexture* current = g_gs_device->GetCurrent();
+	GSVector4 src_uv, draw_rect;
+	if (current)
+	{
+		const GSVector4i src_rect(CalculateDrawSrcRect(current, m_real_size));
+		src_uv = GSVector4(src_rect) / GSVector4(current->GetSize()).xyxy();
+		draw_rect = CalculateDrawDstRect(g_gs_device->GetWindowWidth(), g_gs_device->GetWindowHeight(),
+			src_rect, current->GetSize(), s_display_alignment, g_gs_device->UsesLowerLeftOrigin(),
+			GetVideoMode() == GSVideoMode::SDTV_480P);
+		s_last_draw_rect = draw_rect;
+		const bool refresh_blur = !m_background_blurred;
+		const float blur_scale = FullscreenUI::GetBackgroundBlurScale();
+		m_background_blurred = blur_scale > 0.0f && g_gs_device->GaussianBlur(current, src_uv, draw_rect, blur_scale, refresh_blur);
+	}
+
 	if (BeginPresentFrame(false))
 	{
-		GSTexture* current = g_gs_device->GetCurrent();
 		if (current)
 		{
-			const GSVector4i src_rect(CalculateDrawSrcRect(current, m_real_size));
-			const GSVector4 src_uv(GSVector4(src_rect) / GSVector4(current->GetSize()).xyxy());
-			const GSVector4 draw_rect(CalculateDrawDstRect(g_gs_device->GetWindowWidth(), g_gs_device->GetWindowHeight(),
-				src_rect, current->GetSize(), s_display_alignment, g_gs_device->UsesLowerLeftOrigin(),
-				GetVideoMode() == GSVideoMode::SDTV_480P));
-			s_last_draw_rect = draw_rect;
-
 			const u64 current_time = Common::Timer::GetCurrentValue();
 			const float shader_time = static_cast<float>(Common::Timer::ConvertValueToSeconds(current_time - m_shader_time_start));
 
 			g_gs_device->PresentRect(current, src_uv, nullptr, draw_rect,
-				s_tv_shader_indices[GSConfig.TVShader], shader_time, GSConfig.LinearPresent != GSPostBilinearMode::Off);
+				s_tv_shader_indices[GSConfig.TVShader], shader_time,
+				BilnIf(m_background_blurred || GSConfig.LinearPresent != GSPostBilinearMode::Off));
 		}
 
 		EndPresentFrame();
@@ -1086,7 +1127,7 @@ bool GSRenderer::SaveSnapshotToMemory(u32 window_width, u32 window_height, bool 
 		if (dl)
 		{
 			const GSVector4i rc(0, 0, draw_width, draw_height);
-			g_gs_device->StretchRect(current, src_uv, rt, GSVector4(rc), ShaderConvert::TRANSPARENCY_FILTER);
+			g_gs_device->StretchRect(current, src_uv, rt, GSVector4(rc), ShaderConvert::TRANSPARENCY_FILTER, Biln);
 			dl->CopyFromTexture(rc, rt, rc, 0);
 			dl->Flush();
 

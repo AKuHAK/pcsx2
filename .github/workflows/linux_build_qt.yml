@@ -39,6 +39,10 @@ on:
         required: false
         type: boolean
         default: false
+      cmakeBuildType:
+        required: false
+        type: string
+        default: Release
 
 jobs:
   build_linux:
@@ -55,7 +59,7 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
            fetch-depth: 0
 
@@ -88,11 +92,11 @@ jobs:
         run: echo "timestamp=$(date -u "+%Y-%m-%d-%H;%M;%S")" >> $GITHUB_OUTPUT
 
       - name: ccache cache files
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: .ccache
-          key: ${{ inputs.os }} ${{ inputs.platform }} ${{ inputs.compiler }} ccache ${{ steps.ccache_cache_timestamp.outputs.timestamp }}
-          restore-keys: ${{ inputs.os }} ${{ inputs.platform }} ${{ inputs.compiler }} ccache
+          key: ${{ inputs.os }} ${{ inputs.platform }} ${{ inputs.compiler }} ${{ inputs.cmakeBuildType }} ccache ${{ steps.ccache_cache_timestamp.outputs.timestamp }}
+          restore-keys: ${{ inputs.os }} ${{ inputs.platform }} ${{ inputs.compiler }} ${{ inputs.cmakeBuildType }} ccache
 
       - name: Install Packages
         run: |
@@ -110,7 +114,7 @@ jobs:
 
       - name: Cache Dependencies
         id: cache-deps
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/deps
           key: ${{ inputs.os }} ${{ inputs.platform }} deps ${{ hashFiles('.github/workflows/scripts/linux/build-dependencies-qt.sh', '.github/workflows/scripts/common/*.patch') }}
@@ -129,8 +133,8 @@ jobs:
           ADDITIONAL_CMAKE_ARGS: ${{ inputs.cmakeflags }}
         run: |
           cmake -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
+            -DCMAKE_BUILD_TYPE="${{ inputs.cmakeBuildType }}" \
+            -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=${{ case(inputs.cmakeBuildType == 'Debug', 'OFF', 'ON') }} \
             -DCMAKE_PREFIX_PATH="$HOME/deps" \
             -DCMAKE_C_COMPILER=clang-17 \
             -DCMAKE_CXX_COMPILER=clang++-17 \
@@ -158,6 +162,12 @@ jobs:
       - name: Run Tests
         working-directory: ./build
         run: ninja unittests
+
+      - name: Clean Caches
+        run: |
+          ccache -s
+          ccache --evict-older-than 1d
+          ccache -s
 
       - name: Package AppImage
         if: inputs.buildAppImage == true

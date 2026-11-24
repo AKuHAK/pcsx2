@@ -46,6 +46,7 @@ namespace Pad
 	enum class PhysicalType : u8
 	{
 		NOT_SET = 0x00,
+		PS1_ANALOG = 0x01,
 		GUITAR = 0x01,
 		STANDARD = 0x03
 	};
@@ -62,6 +63,7 @@ namespace Pad
 	enum class ControllerType : u8
 	{
 		NotConnected,
+		DualShock1,
 		DualShock2,
 		Guitar,
 		Jogcon,
@@ -101,6 +103,7 @@ namespace Pad
 	// Default stick deadzone/sensitivity.
 	static constexpr float DEFAULT_STICK_DEADZONE = 0.0f;
 	static constexpr float DEFAULT_STICK_SCALE = 1.33f;
+	static constexpr float DEFAULT_USE_DIAGONAL_SCALE_CORRECTION = false;
 	static constexpr float DEFAULT_MOTOR_SCALE = 1.0f;
 	static constexpr float DEFAULT_PRESSURE_MODIFIER = 0.5f;
 	static constexpr float DEFAULT_BUTTON_DEADZONE = 0.0f;

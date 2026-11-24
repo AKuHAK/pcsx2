@@ -164,9 +164,11 @@ InterfaceSettingsWidget::InterfaceSettingsWidget(SettingsWindow* settings_dialog
 		m_ui.autoUpdateTag->addItems(AutoUpdaterDialog::getTagList());
 		SettingWidgetBinder::BindWidgetToStringSetting(sif, m_ui.autoUpdateTag, "AutoUpdater", "UpdateTag",
 			AutoUpdaterDialog::getDefaultTag());
+		dialog()->registerWidgetHelp(m_ui.autoUpdateTag, tr("Update Channel"), tr("stable"),
+			tr("Selects whether the automatic updater checks for stable or nightly builds."));
 
 		//: Variable %1 shows the version number and variable %2 shows a timestamp.
-		m_ui.autoUpdateCurrentVersion->setText(tr("%1 (%2)").arg(AutoUpdaterDialog::getCurrentVersion()).arg(AutoUpdaterDialog::getCurrentVersionDate()));
+		m_ui.autoUpdateCurrentVersion->setText(tr("%1 (%2)").arg(AutoUpdaterDialog::getCurrentVersion()).arg(AutoUpdaterDialog::getCurrentVersionLocalDate()));
 		connect(m_ui.checkForUpdates, &QPushButton::clicked, this, []() { g_main_window->checkForUpdates(true, true); });
 	}
 	else
@@ -201,7 +203,7 @@ InterfaceSettingsWidget::InterfaceSettingsWidget(SettingsWindow* settings_dialog
 		tr("Unchecked"), tr("Pauses the emulator when a controller with bindings is disconnected."));
 	dialog()->registerWidgetHelp(m_ui.promptOnStateLoadSaveFailure, tr("Prompt On State Load/Save Failure"),
 		tr("Checked"), tr("Displays a modal dialog when a save state load/save operation fails."));
-	dialog()->registerWidgetHelp(m_ui.preferEnglishGameList, tr("Prefer English Titles"), tr("Unchecked"),
+	dialog()->registerWidgetHelp(m_ui.preferEnglishGameList, tr("Prefer English Game Titles"), tr("Unchecked"),
 		tr("For games with both a title in the game's native language and one in English, prefer the English title. Affects how game titles are displayed on the game list, window title and Discord Presence"));
 	dialog()->registerWidgetHelp(m_ui.startFullscreen, tr("Start Fullscreen"), tr("Unchecked"),
 		tr("Automatically switches to fullscreen mode when a game is started."));
@@ -228,7 +230,7 @@ InterfaceSettingsWidget::InterfaceSettingsWidget(SettingsWindow* settings_dialog
 		m_ui.disableWindowResizing, tr("Disable Window Resizing"), tr("Unchecked"),
 		tr("Prevents the main window from being resized."));
 	dialog()->registerWidgetHelp(
-		m_ui.startFullscreenUI, tr("Start Big Picture Mode"), tr("Unchecked"),
+		m_ui.startFullscreenUI, tr("Start In Big Picture Mode"), tr("Unchecked"),
 		tr("Automatically starts Big Picture Mode instead of the regular Qt interface when PCSX2 launches."));
 	dialog()->registerWidgetHelp(
 		m_ui.backgroundBrowse, tr("Game List Background"), tr("None"),
@@ -244,6 +246,14 @@ InterfaceSettingsWidget::InterfaceSettingsWidget(SettingsWindow* settings_dialog
 		m_ui.backgroundScale, tr("Background Image Scaling"), tr("Fit"),
 		tr("Select how to display the background image: <br><br>Fit (Preserve aspect ratio, fit to screen)"
 		   "<br>Fill (Preserve aspect ratio, fill the screen) <br>Stretch (Ignore aspect ratio) <br>Center (Centers the image without any scaling) <br>Tile (Repeat the image to fill the screen)"));
+
+	if (!dialog()->isPerGameSettings())
+	{
+		dialog()->registerWidgetHelp(m_ui.theme, tr("Theme"), tr("N/A"),
+			tr("Selects the color theme and styling for the PCSX2 user interface."));
+		dialog()->registerWidgetHelp(m_ui.language, tr("Language"), tr("System Default"),
+			tr("Selects the display language for the PCSX2 interface, menus, and setting descriptions."));
+	}
 
 	onRenderToSeparateWindowChanged();
 }

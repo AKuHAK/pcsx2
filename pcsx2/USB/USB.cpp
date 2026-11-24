@@ -20,7 +20,7 @@
 #include <stdexcept>
 #include <string>
 
-#define PSXCLK 36864000 /* 36.864 Mhz */
+#define PSXCLK 36864000 /* 36.864 MHz */
 
 namespace USB
 {
@@ -568,6 +568,12 @@ const char* USB::GetDeviceIconName(u32 port)
         return s_usb_device_proxy[port]->IconName();
     else
         return nullptr;
+}
+
+const char* USB::GetDeviceTypeIconName(const std::string_view device)
+{
+	const DeviceProxy* dev = RegisterDevice::instance().Device(device);
+	return dev ? dev->IconName() : nullptr;
 }
 
 const char* USB::GetDeviceSubtypeName(const std::string_view device, u32 subtype)

@@ -62,7 +62,6 @@ bool GSHwHack::GSC_IRem(GSRendererHW& r, int& skip)
 			int horizontal_offset = page_offset % std::max(rt->m_TEX0.TBW, 1U) * rt_psm.pgs.x;
 
 			GSVector4i draw_size = GSVector4i(0, 0, 64, 32) + GSVector4i(horizontal_offset, vertical_offset, horizontal_offset, vertical_offset);
-			rt->UnscaleRTAlpha();
 
 			// We need the original red back now for the next channel shuffle.
 			GSHWDrawConfig& config = r.BeginHLEHardwareDraw(
@@ -82,10 +81,7 @@ bool GSHwHack::GSC_IRem(GSRendererHW& r, int& skip)
 			config.ps.rta_source_correction = 0;
 			config.ps.tfx = TFX_DECAL;
 			config.ps.tcc = true;
-			r.EndHLEHardwareDraw(true);
-
-			rt->m_alpha_min = 0;
-			rt->m_alpha_max = 255;
+			r.EndHLEHardwareDraw(false);
 
 			rt = nullptr;
 			src = nullptr;
@@ -150,7 +146,6 @@ bool GSHwHack::GSC_IRem(GSRendererHW& r, int& skip)
 				int horizontal_offset = page_offset % std::max(rt->m_TEX0.TBW, 1U) * rt_psm.pgs.x;
 
 				draw_size = draw_size + GSVector4i(horizontal_offset, vertical_offset, horizontal_offset, vertical_offset);
-				rt->UnscaleRTAlpha();
 
 				// Shuffle the blue channel in to red, but swap them, we'll need the original red later.
 				GSHWDrawConfig& config = r.BeginHLEHardwareDraw(
@@ -170,10 +165,7 @@ bool GSHwHack::GSC_IRem(GSRendererHW& r, int& skip)
 				config.ps.rta_source_correction = 0;
 				config.ps.tfx = TFX_DECAL;
 				config.ps.tcc = true;
-				r.EndHLEHardwareDraw(true);
-
-				rt->m_alpha_min = 0;
-				rt->m_alpha_max = 255;
+				r.EndHLEHardwareDraw(false);
 
 				rt = nullptr;
 				src = nullptr;
@@ -245,29 +237,6 @@ bool GSHwHack::GSC_GuitarHero(GSRendererHW& r, int& skip)
 			r.ClearGSLocalMemory(r.m_context->offset.zb, r.m_r, 0);
 			r.SwPrimRender(r, RFBP != 0x2DC0, false);
 			skip = 1;
-		}
-	}
-
-	return true;
-}
-
-bool GSHwHack::GSC_SFEX3(GSRendererHW& r, int& skip)
-{
-	if (skip == 0)
-	{
-		if (RTME && RFBP == 0x00500 && RFPSM == PSMCT16 && RTBP0 == 0x00f00 && RTPSM == PSMCT16)
-		{
-			// This draw copies/downscales the RT, but does so in a weird way, by copying it in two halves,
-			// downscaling from 640x224 to 320x112, but splitting it in to 320x64 and 320x48 next to each other.
-			// It then halves the page width on the next draw so they appear one above the other, which is what our TC doesn't support.
-			// This modified that weird halving draw to just draw it as one 320x112 chunk, it then works correctly.
-			// Skipping is no good as the copy is used again later, and it causes a weird shimmer/echo effect every other frame.
-
-			// Add on the height from the second part of the draw to the first, to make it one big rect.
-			r.m_vertex->buff[1].XYZ.Y += r.m_vertex->buff[r.m_vertex->tail - 1].XYZ.Y - r.m_context->XYOFFSET.OFY;
-			r.m_vertex->buff[1].V = r.m_vertex->buff[r.m_vertex->tail - 1].V;
-			r.m_vertex->tail = 2;
-			r.m_index->tail = 2;
 		}
 	}
 
@@ -615,20 +584,6 @@ bool GSHwHack::GSC_TalesOfLegendia(GSRendererHW& r, int& skip)
 	return true;
 }
 
-bool GSHwHack::GSC_UltramanFightingEvolution(GSRendererHW& r, int& skip)
-{
-	if (skip == 0)
-	{
-		if (!s_nativeres && RTME && RFBP == 0x2a00 && RFPSM == PSMZ24 && RTBP0 == 0x1c00 && RTPSM == PSMZ24)
-		{
-			// Don't enable hack on native res if crc is below aggressive.
-			skip = 5; // blur
-		}
-	}
-
-	return true;
-}
-
 bool GSHwHack::GSC_TalesofSymphonia(GSRendererHW& r, int& skip)
 {
 	if (skip == 0)
@@ -955,27 +910,6 @@ bool GSHwHack::GSC_MetalGearSolid3(GSRendererHW& r, int& skip)
 	return true;
 }
 
-bool GSHwHack::GSC_Turok(GSRendererHW& r, int& skip)
-{
-	// Turok does some very silly clears where it will set the alpha channel with a 512x512 draw, then decides the image is actually 640x448 later, this causes havok for the texture cache and target end blocks.
-	// Since we can't look in to the future to check this, the options are either rearrange all the pages in a target when the width changes
-	// (very slow, could break a ton of stuff which stores different things in the alpha channel), or this. I choose this.
-
-	if (r.m_index->tail == 6 && RPRIM->PRIM == 4 && !RTME && RFBMSK == 0x00FFFFFF && floor(r.m_vt.m_max.p.x) == 512 && r.m_env.CTXT[r.m_backed_up_ctx].FRAME.FBW == 10 && RFRAME.FBW == 8 && RFPSM == PSMCT32 && RTEST.ATE && RTEST.ATST == ATST_GEQUAL)
-	{
-		int num_pages = r.m_cached_ctx.FRAME.FBW * ((floor(r.m_vt.m_max.p.y) + 31) / 32);
-		r.m_cached_ctx.FRAME.FBW = 10;
-		// Round them up to fill the row, it later reads the bottom right corner clamped, but because we can't rearrange it ends up reading the black square.
-		num_pages = ((num_pages + 9) / 10) * 10;
-
-		r.ReplaceVerticesWithSprite(
-			r.GetDrawRectForPages(r.m_cached_ctx.FRAME.FBW, r.m_cached_ctx.FRAME.PSM, num_pages),
-			GSVector2i(1, 1));
-	}
-
-	return true;
-}
-
 bool GSHwHack::OI_PointListPalette(GSRendererHW& r, GSTexture* rt, GSTexture* ds, GSTextureCache::Source* t)
 {
 	const u32 n_vertices = r.m_vertex->next;
@@ -1143,14 +1077,14 @@ bool GSHwHack::OI_SonicUnleashed(GSRendererHW& r, GSTexture* rt, GSTexture* ds, 
 		rt_again->m_valid.y /= 2;
 		rt_again->m_valid.w /= 2;
 		rt_again->m_TEX0.PSM = PSMCT32;
-		GSTexture* tex = g_gs_device->CreateRenderTarget(rt_again->m_unscaled_size.x * rt_again->m_scale, rt_again->m_unscaled_size.y * rt_again->m_scale, GSTexture::Format::Color, false);
+		GSTexture* tex = g_gs_device->CreateCompatible(rt_again->m_texture,
+			static_cast<int>(rt_again->m_unscaled_size.x * rt_again->m_scale),
+			static_cast<int>(rt_again->m_unscaled_size.y * rt_again->m_scale), false);
 
 		if (!tex)
 			return false;
 
-
-		g_gs_device->StretchRect(rt_again->m_texture, source_rect, tex, dRect, ShaderConvert::COPY, false);
-
+		g_gs_device->StretchRectAuto(rt_again->m_texture, source_rect, tex, dRect, Nearest);
 
 		g_gs_device->Recycle(rt_again->m_texture);
 		rt_again->m_texture = tex;
@@ -1180,7 +1114,7 @@ bool GSHwHack::OI_SonicUnleashed(GSRendererHW& r, GSTexture* rt, GSTexture* ds, 
 	// This is kind of a bodge because the game confuses everything since the source is really 16bit and it assumes it's really drawing 16bit on the copy back, resizing the target.
 	const GSVector4 dRect(0, 0, copy_size.x, copy_size.y);
 
-	g_gs_device->StretchRect(src->m_texture, sRect, rt, dRect, true, true, true, false);
+	g_gs_device->StretchRectAutoMask(src->m_texture, sRect, rt, dRect, true, true, true, false);
 
 	return false;
 }
@@ -1366,8 +1300,10 @@ bool GSHwHack::MV_Growlanser(GSRendererHW& r)
 
 	GL_INS("MV_Growlanser: %x -> %x %dx%d", RSBP, RDBP, src->GetUnscaledWidth(), src->GetUnscaledHeight());
 
-	g_gs_device->StretchRect(src->GetTexture(), GSVector4(rc) / GSVector4(src->GetUnscaledSize()).xyxy(),
-		dst->GetTexture(), GSVector4(rc) * GSVector4(dst->GetScale()), ShaderConvert::RGBA8_TO_FLOAT32, false);
+	g_gs_device->StretchRectAuto(
+		src->GetTexture(), GSVector4(rc) / GSVector4(src->GetUnscaledSize()).xyxy(),
+		dst->GetTexture(), GSVector4(rc) * GSVector4(dst->GetScale()),
+		Nearest);
 
 	s_last_hacked_move_n = r.s_n;
 	return true;
@@ -1455,7 +1391,6 @@ const GSHwHack::Entry<GSRendererHW::GSC_Ptr> GSHwHack::s_get_skip_count_function
 	CRC_F(GSC_MidnightClub3),
 	CRC_F(GSC_SacredBlaze),
 	CRC_F(GSC_GuitarHero),
-	CRC_F(GSC_SFEX3),
 	CRC_F(GSC_DTGames),
 	CRC_F(GSC_TalesOfLegendia),
 	CRC_F(GSC_TalesofSymphonia),
@@ -1466,7 +1401,6 @@ const GSHwHack::Entry<GSRendererHW::GSC_Ptr> GSHwHack::s_get_skip_count_function
 	CRC_F(GSC_PolyphonyDigitalGames),
 	CRC_F(GSC_MetalGearSolid3),
 	CRC_F(GSC_Battlefield2),
-	CRC_F(GSC_Turok),
 
 	// Channel Effect
 	CRC_F(GSC_NamcoGames),
@@ -1474,9 +1408,6 @@ const GSHwHack::Entry<GSRendererHW::GSC_Ptr> GSHwHack::s_get_skip_count_function
 
 	// Depth Issue
 	CRC_F(GSC_BurnoutGames),
-
-	// Upscaling hacks
-	CRC_F(GSC_UltramanFightingEvolution),
 };
 
 const GSHwHack::Entry<GSRendererHW::OI_Ptr> GSHwHack::s_before_draw_functions[] = {

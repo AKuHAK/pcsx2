@@ -65,6 +65,11 @@ bool Host::CopyTextToClipboard(const std::string_view text)
 	return false;
 }
 
+std::string Host::GetTextFromClipboard()
+{
+	return std::string();
+}
+
 void Host::BeginTextInput()
 {
 }
@@ -168,6 +173,14 @@ void Host::CancelGameListRefresh()
 {
 }
 
+void Host::OnGameListFavoriteChanged(const std::string& path)
+{
+}
+
+void Host::OnGameSettingsChanged(const std::string& path)
+{
+}
+
 bool Host::IsFullscreen()
 {
 	return false;
@@ -243,14 +256,6 @@ void Host::OnAchievementsRefreshed()
 }
 
 void Host::OnAchievementsHardcoreModeChanged(bool enabled)
-{
-}
-
-void Host::OnCoverDownloaderOpenRequested()
-{
-}
-
-void Host::OnCreateMemoryCardOpenRequested()
 {
 }
 

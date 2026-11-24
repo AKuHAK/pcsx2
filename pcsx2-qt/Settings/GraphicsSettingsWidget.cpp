@@ -108,11 +108,12 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* settings_dialog, 
 	SettingWidgetBinder::BindWidgetToIntSetting(
 		sif, m_hw.trilinearFiltering, "EmuCore/GS", "TriFilter", static_cast<int>(TriFiltering::Automatic), -1);
 	SettingWidgetBinder::BindWidgetToEnumSetting(sif, m_hw.anisotropicFiltering, "EmuCore/GS", "MaxAnisotropy",
-		s_anisotropic_filtering_entries, s_anisotropic_filtering_values, "0");
+		s_anisotropic_filtering_entries, s_anisotropic_filtering_values, "0", "GraphicsSettingsWidget");
 	SettingWidgetBinder::BindWidgetToIntSetting(sif, m_hw.dithering, "EmuCore/GS", "dithering_ps2", 2);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_hw.mipmapping, "EmuCore/GS", "hw_mipmap", true);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_hw.accurateAlphaTest, "EmuCore/GS", "HWAccurateAlphaTest", false);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_hw.hwAA1, "EmuCore/GS", "HWAA1", false);
+	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_hw.rov, "EmuCore/GS", "HWROV", false);
 	SettingWidgetBinder::BindWidgetToIntSetting(
 		sif, m_hw.blending, "EmuCore/GS", "accurate_blending_unit", static_cast<int>(AccBlendLevel::Basic));
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_hw.enableHWFixes, "EmuCore/GS", "UserHacks", false);
@@ -154,6 +155,8 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* settings_dialog, 
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_fixes.readTCOnClose, "EmuCore/GS", "UserHacks_ReadTCOnClose", false);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_fixes.estimateTextureRegion, "EmuCore/GS", "UserHacks_EstimateTextureRegion", false);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_fixes.drawBuffering, "EmuCore/GS", "UserHacks_DrawBuffering", false);
+	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_fixes.rewriteLargeSTCoords, "EmuCore/GS", "UserHacks_RewriteLargeSTCoords", false);
+	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_fixes.targetPageRearranging, "EmuCore/GS", "UserHacks_TargetPageRearranging", false);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_fixes.gpuPaletteConversion, "EmuCore/GS", "paltex", false);
 	connect(m_fixes.cpuSpriteRenderBW, &QComboBox::currentIndexChanged, this,
 		&GraphicsSettingsWidget::onCPUSpriteRenderBWChanged);
@@ -172,7 +175,7 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* settings_dialog, 
 	SettingWidgetBinder::BindWidgetToIntSetting(sif, m_upscaling.textureOffsetY, "EmuCore/GS", "UserHacks_TCOffsetY", 0);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_upscaling.alignSprite, "EmuCore/GS", "UserHacks_align_sprite_X", false);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_upscaling.mergeSprite, "EmuCore/GS", "UserHacks_merge_pp_sprite", false);
-	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_upscaling.forceEvenSpritePosition, "EmuCore/GS", "UserHacks_forceEvenSpritePosition", false);
+	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_upscaling.forceEvenSpritePosition, "EmuCore/GS", "UserHacks_ForceEvenSpritePosition", false);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_upscaling.nativePaletteDraw, "EmuCore/GS", "UserHacks_NativePaletteDraw", false);
 
 	//////////////////////////////////////////////////////////////////////////
@@ -225,6 +228,7 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* settings_dialog, 
 	//////////////////////////////////////////////////////////////////////////
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_advanced.useBlitSwapChain, "EmuCore/GS", "UseBlitSwapChain", false);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_advanced.useDebugDevice, "EmuCore/GS", "UseDebugDevice", false);
+	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_advanced.useDebugBlend, "EmuCore/GS", "UseDebugBlend", false);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_advanced.disableMailboxPresentation, "EmuCore/GS", "DisableMailboxPresentation", false);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_advanced.extendedUpscales, "EmuCore/GS", "ExtendedUpscalingMultipliers", false);
 	SettingWidgetBinder::BindWidgetToIntSetting(sif, m_advanced.exclusiveFullscreenControl, "EmuCore/GS", "ExclusiveFullscreenControl", -1, -1);
@@ -238,7 +242,9 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* settings_dialog, 
 	SettingWidgetBinder::BindWidgetToFloatSetting(sif, m_advanced.palFrameRate, "EmuCore/GS", "FrameRatePAL", 50.00f);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_advanced.spinCPUDuringReadbacks, "EmuCore/GS", "HWSpinCPUForReadbacks", false);
 	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_advanced.spinGPUDuringReadbacks, "EmuCore/GS", "HWSpinGPUForReadbacks", false);
+	SettingWidgetBinder::BindWidgetToBoolSetting(sif, m_advanced.rovBarriersVK, "EmuCore/GS", "HWROVBarriersVK", false);
 	SettingWidgetBinder::BindWidgetToIntSetting(sif, m_advanced.texturePreloading, "EmuCore/GS", "texture_preloading", static_cast<int>(TexturePreloadingLevel::Off));
+	SettingWidgetBinder::BindWidgetToIntSetting(sif, m_advanced.depthFeedback, "EmuCore/GS", "DepthFeedbackMode", static_cast<int>(GSDepthFeedbackMode::Auto));
 
 	setTabVisible(m_advanced_tab, QtHost::ShouldShowAdvancedSettings());
 
@@ -407,12 +413,18 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* settings_dialog, 
 		onEnableAudioCaptureArgumentsChanged();
 	}
 
-	// Display tab
+	// Header & Display tab
 	{
-		dialog()->registerWidgetHelp(m_display.widescreenPatches, tr("Enable Widescreen Patches"), tr("Unchecked"),
+		dialog()->registerWidgetHelp(m_header.rendererDropdown, tr("Renderer"), tr("Automatic (Default)"),
+			tr("Selects the graphics renderer. Automatic will select the best available renderer for your hardware."));
+
+		dialog()->registerWidgetHelp(m_header.adapterDropdown, tr("Graphics Adapter"), tr("Default"),
+			tr("Selects which GPU or adapter to use for graphics rendering on systems with multiple graphics devices."));
+
+		dialog()->registerWidgetHelp(m_display.widescreenPatches, tr("Apply Widescreen Patches"), tr("Unchecked"),
 			tr("Automatically loads and applies widescreen patches on game start. Can cause issues."));
 
-		dialog()->registerWidgetHelp(m_display.noInterlacingPatches, tr("Enable No-Interlacing Patches"), tr("Unchecked"),
+		dialog()->registerWidgetHelp(m_display.noInterlacingPatches, tr("Apply No-Interlacing Patches"), tr("Unchecked"),
 			tr("Automatically loads and applies no-interlacing patches on game start. Can cause issues."));
 
 		dialog()->registerWidgetHelp(m_display.disableInterlaceOffset, tr("Disable Interlace Offset"), tr("Unchecked"),
@@ -497,6 +509,9 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* settings_dialog, 
 			m_hw.hwAA1, tr("AA1"), tr("Unchecked"), tr("Enables AA1 (PS2 antialiasing), which some games require to render correctly. This may result in a heavy performance penalty."));
 
 		dialog()->registerWidgetHelp(
+			m_hw.rov, tr("Rasterizer Ordered View"), tr("Unchecked"), tr("Enables Rasterizer Ordered View (ROV), which allows feedback loops to be executed with fewer draw calls. Can improve performance in feedback heavy games with higher accuracy settings."));
+
+		dialog()->registerWidgetHelp(
 			m_hw.textureFiltering, tr("Texture Filtering"), tr("Bilinear (PS2)"),
 			tr("Changes what filtering algorithm is used to map textures to surfaces.<br> "
 			   "Nearest: Makes no attempt to blend colors.<br> "
@@ -528,6 +543,10 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* settings_dialog, 
 			tr("Uploads entire textures at once instead of in small pieces, avoiding redundant uploads when possible. "
 			   "Improves performance in most games, but can make a small selection slower."));
 
+		dialog()->registerWidgetHelp(m_advanced.depthFeedback, tr("Depth Feedback Mode"), tr("Auto (Default)"),
+			tr("Depth feedback mode to use for AAT (accurate alpha test) and AA1 (antialiasing). "
+			   "'Depth as RT' is more compatible though slower than 'Depth'. Keep at Auto unless testing."));
+
 		dialog()->registerWidgetHelp(m_fixes.gpuPaletteConversion, tr("GPU Palette Conversion"), tr("Unchecked"),
 			tr("When enabled the GPU will convert colormap textures, otherwise the CPU will. "
 			   "It is a trade-off between GPU and CPU."));
@@ -546,6 +565,9 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* settings_dialog, 
 			   "May improve performance during readbacks but with a significant increase in power usage."));
 
 		// Software
+		dialog()->registerWidgetHelp(m_sw.swTextureFiltering, tr("Software Texture Filtering"), tr("Bilinear (PS2)"),
+			tr("Selects the texture filtering mode used by the software renderer."));
+
 		dialog()->registerWidgetHelp(m_sw.extraSWThreads, tr("Software Rendering Threads"), tr("2 threads"),
 			tr("Number of rendering threads: 0 for single thread, 2 or more for multithread (1 is for debugging). "
 			   "2 to 4 threads is recommended, any more than that is likely to be slower instead of faster."));
@@ -562,6 +584,9 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* settings_dialog, 
 	{
 		dialog()->registerWidgetHelp(m_fixes.cpuSpriteRenderBW, tr("CPU Sprite Render Size"), tr("0 (Disabled)"),
 			tr("The maximum target memory width that will allow the CPU Sprite Renderer to activate on."));
+
+		dialog()->registerWidgetHelp(m_fixes.cpuSpriteRenderLevel, tr("CPU Sprite Render Level"), tr("Disabled"),
+			tr("Determines filter level for CPU sprite render."));
 
 		dialog()->registerWidgetHelp(m_fixes.cpuCLUTRender, tr("Software CLUT Render"), tr("0 (Disabled)"),
 			tr("Tries to detect when a game is drawing its own color palette and then renders it in software, instead of on the GPU."));
@@ -618,6 +643,12 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* settings_dialog, 
 
 		dialog()->registerWidgetHelp(m_fixes.drawBuffering, tr("Draw Buffering"), tr("Unchecked"),
 			tr("Attempts to reduce draw calls in games which do heavy context switching for blending purposes."));
+		
+		dialog()->registerWidgetHelp(m_fixes.rewriteLargeSTCoords, tr("Rewrite Large ST"), tr("Unchecked"),
+			tr("Rewrite large ST coordinates and clamp the values (mainly for Ridge Racer V and Destruction Derby Arena)."));
+
+		dialog()->registerWidgetHelp(m_fixes.targetPageRearranging, tr("Target Page Rearranging"), tr("Unchecked"),
+			tr("Rearranges memory pages of a target if the game changes the layout at that current VRAM address."));
 	}
 
 	// Upscaling Fixes tab
@@ -656,6 +687,9 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* settings_dialog, 
 
 		dialog()->registerWidgetHelp(m_upscaling.nativePaletteDraw, tr("Unscaled Palette Texture Draws"), tr("Unchecked"),
 			tr("Forces palette texture draws to render at native resolution."));
+
+		dialog()->registerWidgetHelp(m_upscaling.nativeScaling, tr("Native Scaling"), tr("Off (Default)"),
+			tr("Emulates native PS2 coordinate scaling behavior when upscaling to reduce misalignment artifacts and seams in games that draw custom 2D elements."));
 	}
 
 	// Texture Replacement tab
@@ -671,6 +705,12 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* settings_dialog, 
 		dialog()->registerWidgetHelp(m_texture.loadTextureReplacements, tr("Load Textures"), tr("Unchecked"), tr("Loads replacement textures where available and user-provided."));
 
 		dialog()->registerWidgetHelp(m_texture.precacheTextureReplacements, tr("Precache Textures"), tr("Unchecked"), tr("Preloads all replacement textures to memory. Not necessary with asynchronous loading."));
+
+		if (!dialog()->isPerGameSettings())
+		{
+			dialog()->registerWidgetHelp(m_texture.texturesDirectory, tr("Textures Directory"), tr("Default"),
+				tr("Directory where replacement texture packs are loaded from and where dumped textures are saved."));
+		}
 	}
 
 	// Post Processing tab
@@ -701,6 +741,12 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* settings_dialog, 
 
 	// Recording tab
 	{
+		dialog()->registerWidgetHelp(m_capture.enableVideoCapture, tr("Capture Video"), tr("Checked"),
+			tr("Enables video recording during gameplay capture."));
+
+		dialog()->registerWidgetHelp(m_capture.captureContainer, tr("Container Format"), tr("MKV"),
+			tr("Selects the media container file format for video recordings."));
+
 		dialog()->registerWidgetHelp(m_capture.videoCaptureCodec, tr("Video Codec"), tr("Default"),
 			tr("Selects the Video Codec to be used for Video Capture. "
 			   "<b>If unsure, leave it on default.<b>"));
@@ -718,6 +764,11 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* settings_dialog, 
 
 			   "<b>Be careful when using this setting especially when you are upscaling, as higher internal resolutions (above 4x) can result in very large video capture and can cause system overload.</b>"));
 
+		dialog()->registerWidgetHelp(m_capture.videoCaptureWidth, tr("Video Capture Width"), tr("1280"),
+			tr("Custom horizontal resolution width for video recordings when automatic resolution is unchecked."));
+
+		dialog()->registerWidgetHelp(m_capture.videoCaptureHeight, tr("Video Capture Height"), tr("720"),
+			tr("Custom vertical resolution height for video recordings when automatic resolution is unchecked."));
 
 		dialog()->registerWidgetHelp(m_capture.enableVideoCaptureArguments, tr("Enable Extra Video Arguments"), tr("Unchecked"), tr("Allows you to pass arguments to the selected video codec."));
 
@@ -725,6 +776,9 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* settings_dialog, 
 			tr("Parameters passed to the selected video codec.<br>"
 			   "<b>You must use '=' to separate key from value and ':' to separate two pairs from each other.</b><br>"
 			   "For example: \"crf = 21 : preset = veryfast\""));
+
+		dialog()->registerWidgetHelp(m_capture.enableAudioCapture, tr("Capture Audio"), tr("Checked"),
+			tr("Enables audio stream recording into video captures."));
 
 		dialog()->registerWidgetHelp(m_capture.audioCaptureCodec, tr("Audio Codec"), tr("Default"),
 			tr("Selects the Audio Codec to be used for Video Capture. "
@@ -756,6 +810,21 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* settings_dialog, 
 			tr("Overrides the driver's heuristics for enabling exclusive fullscreen, or direct flip/scanout.<br>"
 			   "Disallowing exclusive fullscreen may enable smoother task switching and overlays, but increase input latency."));
 
+		dialog()->registerWidgetHelp(m_advanced.overrideTextureBarriers, tr("Override Texture Barriers"), tr("Automatic (Default)"),
+			tr("Forces texture barrier functionality to the specified value."));
+
+		dialog()->registerWidgetHelp(m_advanced.rovBarriersVK, tr("ROV Barriers Vulkan"), tr("Unchecked"),
+			tr("Forces extra barriers when using ROV with Vulkan to fix graphical issues present in some games and hardware configurations."));
+
+		dialog()->registerWidgetHelp(m_advanced.disableFramebufferFetch, tr("Disable Framebuffer Fetch"), tr("Unchecked"),
+			tr("Prevents the usage of framebuffer fetch when supported by host GPU."));
+
+		dialog()->registerWidgetHelp(m_advanced.disableShaderCache, tr("Disable Shader Cache"), tr("Unchecked"),
+			tr("Prevents the loading and saving of shaders/pipelines to disk."));
+
+		dialog()->registerWidgetHelp(m_advanced.disableVertexShaderExpand, tr("Disable Vertex Shader Expand"), tr("Unchecked"),
+			tr("Falls back to the CPU for expanding sprites/lines."));
+
 		dialog()->registerWidgetHelp(m_advanced.disableMailboxPresentation, tr("Disable Mailbox Presentation"), tr("Unchecked"),
 			tr("Forces the use of FIFO over Mailbox presentation, i.e. double buffering instead of triple buffering. "
 			   "Usually results in worse frame pacing."));
@@ -763,8 +832,11 @@ GraphicsSettingsWidget::GraphicsSettingsWidget(SettingsWindow* settings_dialog, 
 		dialog()->registerWidgetHelp(m_advanced.extendedUpscales, tr("Extended Upscaling Multipliers"), tr("Unchecked"),
 			tr("Displays additional, very high upscaling multipliers dependent on GPU and driver capability."));
 
-		dialog()->registerWidgetHelp(m_advanced.useDebugDevice, tr("Enable Debug Device"), tr("Unchecked"),
+		dialog()->registerWidgetHelp(m_advanced.useDebugDevice, tr("Use Debug Device"), tr("Unchecked"),
 			tr("Enables API-level validation of graphics commands."));
+
+		dialog()->registerWidgetHelp(m_advanced.useDebugBlend, tr("Use Debug Blend"), tr("Unchecked"),
+			tr("Forces SW blending and disables several optimizations."));
 
 		dialog()->registerWidgetHelp(m_advanced.gsDownloadMode, tr("GS Download Mode"), tr("Accurate"),
 			tr("Skips synchronizing with the GS thread and host GPU for GS downloads. "
@@ -998,6 +1070,7 @@ void GraphicsSettingsWidget::updateRendererDependentOptions()
 	const bool is_software = (type == GSRendererType::SW);
 	const bool is_auto = (type == GSRendererType::Auto);
 	const bool is_vk = (type == GSRendererType::VK);
+	const bool is_ogl = (type == GSRendererType::OGL);
 	const bool is_disable_barriers = (type == GSRendererType::Metal || type == GSRendererType::SW);
 	const bool hw_fixes = (is_hardware && m_hw.enableHWFixes && m_hw.enableHWFixes->checkState() == Qt::Checked);
 
@@ -1039,6 +1112,12 @@ void GraphicsSettingsWidget::updateRendererDependentOptions()
 
 	if (m_advanced.exclusiveFullscreenControl)
 		m_advanced.exclusiveFullscreenControl->setEnabled(is_auto || is_vk);
+
+	if (m_hw.rov)
+		m_hw.rov->setDisabled(!is_hardware || is_ogl);
+
+	if (m_advanced.rovBarriersVK)
+		m_advanced.rovBarriersVK->setDisabled(!is_hardware || !is_vk);
 
 	// populate adapters
 	std::vector<GSAdapterInfo> adapters = GSGetAdapterInfo(type);

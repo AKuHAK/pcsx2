@@ -371,7 +371,7 @@ const Pad::ControllerInfo& PadPopn::GetInfo() const
 
 void PadPopn::Set(u32 index, float value)
 {
-	if (index > Inputs::LENGTH)
+	if (index >= Inputs::LENGTH)
 	{
 		return;
 	}
@@ -407,6 +407,10 @@ void PadPopn::SetRawPressureButton(u32 index, const std::tuple<bool, u8> value)
 }
 
 void PadPopn::SetAxisScale(float deadzone, float scale)
+{
+}
+
+void PadPopn::SetDiagonalScaleCorrection(bool enabled)
 {
 }
 

@@ -4,6 +4,7 @@
 #include "Host.h"
 #include "Input/InputManager.h"
 #include "SIO/Pad/Pad.h"
+#include "SIO/Pad/PadDualshock1.h"
 #include "SIO/Pad/PadDualshock2.h"
 #include "SIO/Pad/PadGuitar.h"
 #include "SIO/Pad/PadJogcon.h"
@@ -123,8 +124,10 @@ void Pad::LoadConfig(const SettingsInterface& si)
 
 		const float axis_deadzone = si.GetFloatValue(section.c_str(), "Deadzone", Pad::DEFAULT_STICK_DEADZONE);
 		const float axis_scale = si.GetFloatValue(section.c_str(), "AxisScale", Pad::DEFAULT_STICK_SCALE);
+		const bool use_diagonal_scale_correction = si.GetBoolValue(section.c_str(), "UseDiagonalScaleCorrection", Pad::DEFAULT_USE_DIAGONAL_SCALE_CORRECTION);
 		const float button_deadzone = si.GetFloatValue(section.c_str(), "ButtonDeadzone", Pad::DEFAULT_BUTTON_DEADZONE);
 		pad->SetAxisScale(axis_deadzone, axis_scale);
+		pad->SetDiagonalScaleCorrection(use_diagonal_scale_correction);
 		pad->SetButtonDeadzone(button_deadzone);
 
 		if (ci->vibration_caps != Pad::VibrationCapabilities::NoVibration)
@@ -232,12 +235,17 @@ void Pad::SetDefaultHotkeyConfig(SettingsInterface& si)
 	si.SetStringValue("Hotkeys", "GSDumpMultiFrame", "Keyboard/Control & Keyboard/Shift & Keyboard/F8");
 	si.SetStringValue("Hotkeys", "Screenshot", "Keyboard/F8");
 	si.SetStringValue("Hotkeys", "GSDumpSingleFrame", "Keyboard/Shift & Keyboard/F8");
+	si.SetStringValue("Hotkeys", "GSStartSavingMetricsVariableFrames", "Keyboard/F10");
+	si.SetStringValue("Hotkeys", "GSStartSavingMetricsFixedFrames", "Keyboard/Control & Keyboard/F10");
 	si.SetStringValue("Hotkeys", "ToggleSoftwareRendering", "Keyboard/F9");
 	//  si.SetStringValue("Hotkeys", "ToggleTextureDumping", "Keyboard"); TBD
 	//  si.SetStringValue("Hotkeys", "ToggleTextureReplacements", "Keyboard"); TBD
 	si.SetStringValue("Hotkeys", "ZoomIn", "Keyboard/Control & Keyboard/Plus");
 	si.SetStringValue("Hotkeys", "ZoomOut", "Keyboard/Control & Keyboard/Minus");
 	// Missing hotkey for resetting zoom back to 100 with Keyboard/Control & Keyboard/Asterisk
+
+	// PCSX2 Controller Settings - Hotkeys - Graphics
+	si.SetStringValue("Hotkeys", "Mute", "Keyboard/Control & Keyboard/M");
 
 	// PCSX2 Controller Settings - Hotkeys - Input Recording
 	si.SetStringValue("Hotkeys", "InputRecToggleMode", "Keyboard/Shift & Keyboard/R");
@@ -264,6 +272,7 @@ void Pad::SetDefaultHotkeyConfig(SettingsInterface& si)
 
 static const Pad::ControllerInfo* s_controller_info[] = {
 	&PadNotConnected::ControllerInfo,
+	&PadDualshock1::ControllerInfo,
 	&PadDualshock2::ControllerInfo,
 	&PadGuitar::ControllerInfo,
 	&PadJogcon::ControllerInfo,
@@ -503,6 +512,9 @@ PadBase* Pad::CreatePad(u8 unifiedSlot, ControllerType controllerType, size_t ej
 {
 	switch (controllerType)
 	{
+		case ControllerType::DualShock1:
+			s_controllers[unifiedSlot] = std::make_unique<PadDualshock1>(unifiedSlot, ejectTicks);
+			break;
 		case ControllerType::DualShock2:
 			s_controllers[unifiedSlot] = std::make_unique<PadDualshock2>(unifiedSlot, ejectTicks);
 			break;
@@ -549,6 +561,32 @@ void Pad::SetControllerState(u32 controller, u32 bind, float value)
 		return;
 
 	s_controllers[controller]->Set(bind, value);
+}
+
+void Pad::ResetControllerInputs(u32 controller)
+{
+	if (controller >= NUM_CONTROLLER_PORTS || !HasConnectedPad(controller))
+		return;
+
+	for (InputBindingInfo binding : s_controllers[controller]->GetInfo().bindings)
+	{
+		switch (binding.bind_type)
+		{
+			case InputBindingInfo::Type::Button:
+			case InputBindingInfo::Type::Axis:
+			case InputBindingInfo::Type::HalfAxis:
+				s_controllers[controller]->Set(binding.bind_index, 0);
+				break;
+			default:
+				break;
+		}
+	}
+}
+
+void Pad::ResetAllControllerInputs()
+{
+	for (u32 port = 0; port < NUM_CONTROLLER_PORTS; port++)
+		ResetControllerInputs(port);
 }
 
 bool Pad::Freeze(StateWrapper& sw)

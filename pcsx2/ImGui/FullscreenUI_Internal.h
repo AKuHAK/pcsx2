@@ -9,6 +9,8 @@
 #include "common/Timer.h"
 #include "Input/InputManager.h"
 
+#include <thread>
+
 #define TR_CONTEXT "FullscreenUI"
 
 template <size_t L>
@@ -42,6 +44,7 @@ public:
 #define FSUI_NSTR(str) str
 
 using ImGuiFullscreen::ActiveButton;
+using ImGuiFullscreen::ActiveButtonWithRightText;
 using ImGuiFullscreen::AddNotification;
 using ImGuiFullscreen::BeginFullscreenColumns;
 using ImGuiFullscreen::BeginFullscreenColumnWindow;
@@ -49,6 +52,7 @@ using ImGuiFullscreen::BeginFullscreenWindow;
 using ImGuiFullscreen::BeginHorizontalMenu;
 using ImGuiFullscreen::BeginMenuButtons;
 using ImGuiFullscreen::BeginNavBar;
+using ImGuiFullscreen::BeginSidebar;
 using ImGuiFullscreen::CenterImage;
 using ImGuiFullscreen::CloseChoiceDialog;
 using ImGuiFullscreen::CloseFileSelector;
@@ -58,6 +62,7 @@ using ImGuiFullscreen::EndFullscreenWindow;
 using ImGuiFullscreen::EndHorizontalMenu;
 using ImGuiFullscreen::EndMenuButtons;
 using ImGuiFullscreen::EndNavBar;
+using ImGuiFullscreen::EndSidebar;
 using ImGuiFullscreen::EnumChoiceButton;
 using ImGuiFullscreen::FloatingButton;
 using ImGuiFullscreen::FocusResetType;
@@ -83,12 +88,14 @@ using ImGuiFullscreen::IsGamepadInputSource;
 using ImGuiFullscreen::LAYOUT_FOOTER_HEIGHT;
 using ImGuiFullscreen::LAYOUT_LARGE_FONT_SIZE;
 using ImGuiFullscreen::LAYOUT_MEDIUM_FONT_SIZE;
+using ImGuiFullscreen::LAYOUT_MENU_BACKGROUND_OPACITY;
 using ImGuiFullscreen::LAYOUT_MENU_BUTTON_HEIGHT;
 using ImGuiFullscreen::LAYOUT_MENU_BUTTON_HEIGHT_NO_SUMMARY;
 using ImGuiFullscreen::LAYOUT_MENU_BUTTON_X_PADDING;
 using ImGuiFullscreen::LAYOUT_MENU_BUTTON_Y_PADDING;
 using ImGuiFullscreen::LAYOUT_SCREEN_HEIGHT;
 using ImGuiFullscreen::LAYOUT_SCREEN_WIDTH;
+using ImGuiFullscreen::LAYOUT_SIDEBAR_WIDTH;
 using ImGuiFullscreen::LayoutScale;
 using ImGuiFullscreen::LoadSvgTexture;
 using ImGuiFullscreen::LoadTexture;
@@ -115,6 +122,8 @@ using ImGuiFullscreen::ResetFocusHere;
 using ImGuiFullscreen::RightAlignNavButtons;
 using ImGuiFullscreen::SetFullscreenFooterText;
 using ImGuiFullscreen::ShowToast;
+using ImGuiFullscreen::SidebarItem;
+using ImGuiFullscreen::SidebarState;
 using ImGuiFullscreen::SvgScaling;
 using ImGuiFullscreen::ThreeWayToggleButton;
 using ImGuiFullscreen::ToggleButton;
@@ -134,6 +143,8 @@ using ImGuiFullscreen::UISecondaryStrongColor;
 using ImGuiFullscreen::UISecondaryTextColor;
 using ImGuiFullscreen::UISecondaryWeakColor;
 using ImGuiFullscreen::UITextHighlightColor;
+using ImGuiFullscreen::UITextShadowColor;
+using ImGuiFullscreen::UpdateSidebarFocus;
 using ImGuiFullscreen::WantsToCloseMenu;
 
 namespace FullscreenUI
@@ -157,6 +168,9 @@ namespace FullscreenUI
 		None,
 		Exit,
 		Achievements,
+		Capture,
+		Emulation,
+		Settings,
 	};
 
 	enum class SettingsPage
@@ -173,12 +187,19 @@ namespace FullscreenUI
 		Folders,
 		Achievements,
 		Controller,
-		Hotkey,
 		Advanced,
 		Patches,
 		Cheats,
 		GameFixes,
 		Count
+	};
+
+	enum class ControllerCategory
+	{
+		Global,
+		Port,
+		USB,
+		Hotkeys,
 	};
 
 	enum class GameListView
@@ -215,13 +236,18 @@ namespace FullscreenUI
 	void CopyTextToClipboard(std::string title, const std::string_view text);
 	void DrawAboutWindow();
 	void OpenAboutWindow();
+	void DrawCoverDownloaderWindow();
+	void OpenCoverDownloaderWindow();
+	void CloseCoverDownloaderWindow();
+	void CoverDownloaderThreadFunc(const std::vector<std::string>& urls);
 	void GetStandardSelectionFooterText(SmallStringBase& dest, bool back_instead_of_cancel);
 	void ApplyLayoutSettings(const SettingsInterface* bsi = nullptr);
 
-	void DrawSvgTexture(GSTexture* padded_texture, ImVec2 unpadded_size);
+	void DrawSvgTexture(GSTexture* padded_texture, ImVec2 unpadded_size, const ImVec4& color = ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
 	void DrawCachedSvgTexture(const std::string& path, ImVec2 size, SvgScaling mode);
 	void DrawCachedSvgTextureAsync(const std::string& path, ImVec2 size, SvgScaling mode);
-	void DrawListSvgTexture(ImDrawList* drawList, GSTexture* padded_texture, const ImVec2& p_min, const ImVec2& p_unpadded_max);
+	void DrawListSvgTexture(ImDrawList* drawList, GSTexture* padded_texture, const ImVec2& p_min, const ImVec2& p_unpadded_max,
+		ImU32 color = IM_COL32_WHITE);
 
 	inline MainWindowType s_current_main_window = MainWindowType::None;
 	inline PauseSubMenu s_current_pause_submenu = PauseSubMenu::None;
@@ -238,6 +264,18 @@ namespace FullscreenUI
 	inline char s_achievements_login_username[256] = {};
 	inline char s_achievements_login_password[256] = {};
 	inline Achievements::LoginRequestReason s_achievements_login_reason = Achievements::LoginRequestReason::UserInitiated;
+
+	// cover downloader dialog state
+	inline bool s_cover_downloader_open = false;
+	inline std::array<char, 4096> s_cover_downloader_urls_buffer = {};
+	inline bool s_cover_downloader_use_title_filenames = false;
+	inline bool s_cover_downloader_downloading = false;
+	inline std::unique_ptr<std::thread> s_cover_downloader_thread;
+	inline std::mutex s_cover_downloader_mutex;
+	inline std::string s_cover_downloader_status;
+	inline bool s_cover_downloader_has_error = false;
+	inline s32 s_cover_downloader_progress_max = 0;
+	inline s32 s_cover_downloader_progress_value = 0;
 
 	// local copies of the currently-running game
 	inline std::string s_current_game_title;
@@ -350,6 +388,10 @@ namespace FullscreenUI
 	inline std::unordered_map<std::string, std::string> s_cover_image_map;
 	inline std::vector<const GameList::Entry*> s_game_list_sorted_entries;
 	inline GameListView s_game_list_view = GameListView::Grid;
+	inline bool s_game_list_needs_sort = true;
+
+	// Cached list of unsorted game list entries; used to detect changes and re-sort when needed
+	inline std::vector<const GameList::Entry*> s_last_unsorted_entries;
 
 	//////////////////////////////////////////////////////////////////////////
 	// Background
@@ -391,8 +433,11 @@ namespace FullscreenUI
 	void DrawMemoryCardSettingsPage();
 	void DrawNetworkHDDSettingsPage();
 	void DrawFoldersSettingsPage();
-	void DrawAchievementsSettingsPage(std::unique_lock<std::mutex>& settings_lock);
+	void DrawAchievementsSettingsPage();
 	void DrawControllerSettingsPage();
+	void DrawControllerGlobalSettings();
+	void DrawControllerPortSettings(u32 global_slot);
+	void DrawUSBPortSettings(u32 port);
 	void DrawHotkeySettingsPage();
 	void DrawAdvancedSettingsPage();
 	void DrawPatchesOrCheatsSettingsPage(bool cheats);
@@ -405,6 +450,7 @@ namespace FullscreenUI
 	void SetSettingsChanged(SettingsInterface* bsi);
 	bool GetEffectiveBoolSetting(SettingsInterface* bsi, const char* section, const char* key, bool default_value);
 	s32 GetEffectiveIntSetting(SettingsInterface* bsi, const char* section, const char* key, s32 default_value);
+	std::string GetEffectiveStringSetting(SettingsInterface* bsi, const char* section, const char* key, const char* default_value);
 	void DoCopyGameSettings();
 	void DoClearGameSettings();
 	void ResetControllerSettings();
@@ -412,6 +458,10 @@ namespace FullscreenUI
 	void DoSaveInputProfile();
 	void DoSaveInputProfile(const std::string& name);
 	void DoResetSettings();
+
+	SidebarState* GetSidebarForPage(SettingsPage page);
+	bool BeginSidebarContent(const char* name, SidebarState& sidebar);
+	void EndSidebarContent();
 
 	bool DrawToggleSetting(SettingsInterface* bsi, const char* title, const char* summary, const char* section, const char* key,
 		bool default_value, bool enabled = true, bool allow_tristate = true, float height = ImGuiFullscreen::LAYOUT_MENU_BUTTON_HEIGHT,
@@ -445,6 +495,10 @@ namespace FullscreenUI
 	void DrawStringListSetting(SettingsInterface* bsi, const char* title, const char* summary, const char* section, const char* key,
 		const char* default_value, SettingInfo::GetOptionsCallback options_callback, bool enabled = true,
 		float height = ImGuiFullscreen::LAYOUT_MENU_BUTTON_HEIGHT, std::pair<ImFont*, float> font = g_large_font, std::pair<ImFont*, float> summary_font = g_medium_font);
+	void DrawStringListSetting(SettingsInterface* bsi, const char* title, const char* summary, const char* section, const char* key,
+		const char* default_value, const std::vector<std::pair<std::string, std::string>>& items, bool enabled = true,
+		std::vector<std::string> dependent_keys = {},
+		float height = ImGuiFullscreen::LAYOUT_MENU_BUTTON_HEIGHT, std::pair<ImFont*, float> font = g_large_font, std::pair<ImFont*, float> summary_font = g_medium_font);
 	void DrawIPAddressSetting(SettingsInterface* bsi, const char* title, const char* summary, const char* section, const char* key,
 		const char* default_value, bool enabled = true, float height = ImGuiFullscreen::LAYOUT_MENU_BUTTON_HEIGHT,
 		std::pair<ImFont*, float> font = g_large_font, std::pair<ImFont*, float> summary_font = g_medium_font,
@@ -476,13 +530,16 @@ namespace FullscreenUI
 	void DrawInputBindingWindow();
 	void DrawInputBindingButton(SettingsInterface* bsi, InputBindingInfo::Type type, const char* section, const char* name, const char* display_name, const char* icon_name, bool show_type = true);
 	void ClearInputBindingVariables();
-	void StartAutomaticBinding(u32 port);
+	void StartAutomaticBinding(u32 port, bool usb = false);
 	void DrawSettingInfoSetting(SettingsInterface* bsi, const char* section, const char* key, const SettingInfo& si,
 		const char* translation_ctx);
 	void OpenMemoryCardCreateDialog();
 	void DoCreateMemoryCard(std::string name, MemoryCardType type, MemoryCardFileType file_type, bool use_ntfs_compression = false);
 
 	inline SettingsPage s_settings_page = SettingsPage::Interface;
+	inline ControllerCategory s_controller_category = ControllerCategory::Global;
+	inline u32 s_controller_index = 0; // pad slot or USB port
+	inline SidebarState s_controller_sidebar;
 	inline std::unique_ptr<INISettingsInterface> s_game_settings_interface;
 	inline std::unique_ptr<GameList::Entry> s_game_settings_entry;
 	inline std::vector<std::pair<std::string, bool>> s_game_list_directories_cache;

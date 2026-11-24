@@ -258,7 +258,7 @@ const Pad::ControllerInfo& PadGuitar::GetInfo() const
 
 void PadGuitar::Set(u32 index, float value)
 {
-	if (index > Inputs::LENGTH)
+	if (index >= Inputs::LENGTH)
 	{
 		return;
 	}
@@ -336,6 +336,10 @@ void PadGuitar::SetAxisScale(float deadzone, float scale)
 {
 	this->whammyDeadzone = deadzone;
 	this->whammyAxisScale = scale;
+}
+
+void PadGuitar::SetDiagonalScaleCorrection(bool enabled)
+{
 }
 
 float PadGuitar::GetVibrationScale(u32 motor) const

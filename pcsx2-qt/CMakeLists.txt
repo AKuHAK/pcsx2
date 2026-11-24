@@ -35,6 +35,9 @@ target_sources(pcsx2-qt PRIVATE
 	SetupWizardDialog.h
 	SetupWizardDialog.ui
 	Themes.cpp
+	ToolbarCustomizationDialog.cpp
+	ToolbarCustomizationDialog.h
+	ToolbarCustomizationDialog.ui
 	Translations.cpp
 	QtHost.cpp
 	QtHost.h
@@ -67,6 +70,7 @@ target_sources(pcsx2-qt PRIVATE
 	Settings/BIOSSettingsWidget.cpp
 	Settings/BIOSSettingsWidget.h
 	Settings/BIOSSettingsWidget.ui
+	Settings/ControllerBindingWidget_DualShock1.ui
 	Settings/ControllerBindingWidget_DualShock2.ui
 	Settings/ControllerBindingWidget_Guitar.ui
 	Settings/ControllerBindingWidget_Popn.ui
@@ -196,6 +200,7 @@ target_sources(pcsx2-qt PRIVATE
 	Debugger/ModuleModel.h
 	Debugger/ModuleView.cpp
 	Debugger/ModuleView.h
+	Debugger/NavigationHistoryStack.h
 	Debugger/RegisterView.cpp
 	Debugger/RegisterView.h
 	Debugger/RegisterView.ui

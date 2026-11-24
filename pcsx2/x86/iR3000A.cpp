@@ -99,6 +99,65 @@ static void iopRecError(int err);
 
 #ifdef DUMP_BLOCKS
 static ZydisFormatterFunc s_old_print_address;
+static ZydisFormatterFunc s_old_print_disp;
+
+static bool Address2Symbol(u64 address, SmallString &buf)
+{
+
+#define A(x) ((u64)(x))
+
+	if (address >= A(iopMem->Main) && address < A(iopMem->P))
+	{
+		buf.append_format("iopMem+0x{:08X}", static_cast<u32>(address - A(iopMem->Main)));
+	}
+	else if (address >= A(&psxRegs.GPR) && address < A(&psxRegs.CP0))
+	{
+		buf.append_format("psxRegs.GPR.{}", R3000A::disRNameGPR[static_cast<u32>(address - A(&psxRegs)) / 4u]);
+	}
+	else if (address == A(&psxRegs.pc))
+	{
+		buf.append("psxRegs.pc");
+	}
+	else if (address == A(&psxRegs.cycle))
+	{
+		buf.append("psxRegs.cycle");
+	}
+	else if (address == A(&psxRegs.iopNextEventCycle))
+	{
+		buf.append("psxRegs.iopNextEventCycle");
+	}
+	else
+	{
+		return false;
+	}
+
+#undef A
+
+	return true;
+}
+
+static ZyanStatus ZydisFormatterPrintDisplacement(const ZydisFormatter* formatter,
+	ZydisFormatterBuffer* buffer, ZydisFormatterContext* context)
+{
+	u64 address = (u64)R3000A_TEXTPTR + context->operand->mem.disp.value;
+	bool did_print = false;
+	SmallString buf;
+
+	// hardcoded RTEXTPTR
+	if (context->operand->mem.base == ZYDIS_REGISTER_RBX) {
+		did_print = Address2Symbol(address, buf);
+	}
+
+	if (did_print)
+	{
+		ZYAN_CHECK(ZydisFormatterBufferAppend(buffer, ZYDIS_TOKEN_SYMBOL));
+		ZyanString* string;
+		ZYAN_CHECK(ZydisFormatterBufferGetString(buffer, &string));
+		return ZyanStringAppendFormat(string, "-%s+&%s", "R3000A_TEXTPTR", buf.c_str());
+	}
+
+	return s_old_print_disp(formatter, buffer, context);
+}
 
 static ZyanStatus ZydisFormatterPrintAddressAbsolute(const ZydisFormatter* formatter,
 	ZydisFormatterBuffer* buffer, ZydisFormatterContext* context)
@@ -107,40 +166,17 @@ static ZyanStatus ZydisFormatterPrintAddressAbsolute(const ZydisFormatter* forma
 	ZYAN_CHECK(ZydisCalcAbsoluteAddress(context->instruction, context->operand,
 		context->runtime_address, &address));
 
-	char buf[128];
-	u32 len = 0;
+	SmallString buf;
+	bool did_print = false;
 
-#define A(x) ((u64)(x))
+	did_print = Address2Symbol(address, buf);
 
-	if (address >= A(iopMem->Main) && address < A(iopMem->P))
-	{
-		len = snprintf(buf, sizeof(buf), "iopMem+0x%08X", static_cast<u32>(address - A(iopMem->Main)));
-	}
-	else if (address >= A(&psxRegs.GPR) && address < A(&psxRegs.CP0))
-	{
-		len = snprintf(buf, sizeof(buf), "psxRegs.GPR.%s", R3000A::disRNameGPR[static_cast<u32>(address - A(&psxRegs)) / 4u]);
-	}
-	else if (address == A(&psxRegs.pc))
-	{
-		len = snprintf(buf, sizeof(buf), "psxRegs.pc");
-	}
-	else if (address == A(&psxRegs.cycle))
-	{
-		len = snprintf(buf, sizeof(buf), "psxRegs.cycle");
-	}
-	else if (address == A(&psxRegs.iopNextEventCycle))
-	{
-		len = snprintf(buf, sizeof(buf), "psxRegs.iopNextEventCycle");
-	}
-
-#undef A
-
-	if (len > 0)
+	if (did_print)
 	{
 		ZYAN_CHECK(ZydisFormatterBufferAppend(buffer, ZYDIS_TOKEN_SYMBOL));
 		ZyanString* string;
 		ZYAN_CHECK(ZydisFormatterBufferGetString(buffer, &string));
-		return ZyanStringAppendFormat(string, "&%s", buf);
+		return ZyanStringAppendFormat(string, "&%s", buf.c_str());
 	}
 
 	return s_old_print_address(formatter, buffer, context);
@@ -324,7 +360,7 @@ void _psxDeleteReg(int reg, int flush)
 	_deletePSXtoX86reg(reg, flush ? DELETE_REG_FREE : DELETE_REG_FREE_NO_WRITEBACK);
 }
 
-void _psxMoveGPRtoR(const xRegister32& to, int fromgpr)
+void _psxMoveGPRtoR(const xRegister32& to, int fromgpr, bool allow_preload)
 {
 	if (PSX_IS_CONST1(fromgpr))
 	{
@@ -332,7 +368,16 @@ void _psxMoveGPRtoR(const xRegister32& to, int fromgpr)
 	}
 	else
 	{
-		const int reg = EEINST_USEDTEST(fromgpr) ? _allocX86reg(X86TYPE_PSX, fromgpr, MODE_READ) : _checkX86reg(X86TYPE_PSX, fromgpr, MODE_READ);
+		int reg = _checkX86reg(X86TYPE_PSX, fromgpr, MODE_READ);
+
+		if (allow_preload && reg < 0)
+		{
+			if (EEINST_USEDTEST(fromgpr))
+			{
+				reg = _allocX86reg(X86TYPE_PSX, fromgpr, MODE_READ);
+			}
+		}
+
 		if (reg >= 0)
 			xMOV(to, xRegister32(reg));
 		else
@@ -918,8 +963,6 @@ static void recReserve()
 		pxFailRel("Failed to allocate R3000 InstCache array.");
 }
 
-#define R3000A_TEXTPTR (&psxRegs.GPR.r[33])
-
 void recResetIOP()
 {
 	DevCon.WriteLn("iR3000A Recompiler reset.");
@@ -1311,7 +1354,8 @@ static bool psxDynarecCheckBreakpoint()
 		auto cond = CBreakPoints::GetBreakPointCondition(BREAKPOINT_IOP, pc);
 		if (cond == NULL || cond->Evaluate())
 		{
-			hit = true;
+			if(CBreakPoints::HandleBreakpointHit(BREAKPOINT_IOP, pc))
+				hit = true;
 		}
 	}
 	//check breakpoint in delay slot
@@ -1319,7 +1363,8 @@ static bool psxDynarecCheckBreakpoint()
 	{
 		auto cond = CBreakPoints::GetBreakPointCondition(BREAKPOINT_IOP, pc + 4);
 		if (cond == NULL || cond->Evaluate())
-			hit = true;
+			if(CBreakPoints::HandleBreakpointHit(BREAKPOINT_IOP, pc + 4))
+				hit = true;
 	}
 
 	if (!hit)
@@ -1336,9 +1381,7 @@ static bool psxDynarecCheckBreakpoint()
 static bool psxDynarecMemcheck(size_t i)
 {
 	const u32 pc = psxRegs.pc;
-	const u32 op = iopMemRead32(pc);
-	const R5900::OPCODE& opcode = R5900::GetInstruction(op);
-	auto mc = CBreakPoints::GetMemChecks(BREAKPOINT_IOP)[i];
+	const auto mc = CBreakPoints::GetMemChecks(BREAKPOINT_IOP)[i];
 
 	if (CBreakPoints::CheckSkipFirst(BREAKPOINT_IOP, pc) == pc)
 	{
@@ -1351,13 +1394,8 @@ static bool psxDynarecMemcheck(size_t i)
 			return false;
 	}
 
-	if (mc.result & MEMCHECK_LOG)
-	{
-		if (opcode.flags & IS_STORE)
-			DevCon.WriteLn("Hit R3000 store breakpoint @0x%x", pc);
-		else
-			DevCon.WriteLn("Hit R3000 load breakpoint @0x%x", pc);
-	}
+	if (!CBreakPoints::HandleMemCheckHit(BREAKPOINT_IOP, mc.start, mc.end))
+		return false;
 
 	CBreakPoints::SetBreakpointTriggered(true, BREAKPOINT_IOP);
 	VMManager::SetPaused(true);
@@ -1372,7 +1410,7 @@ static void psxRecMemcheck(u32 op, u32 bits, bool store)
 	_psxFlushCall(FLUSH_EVERYTHING | FLUSH_PC);
 
 	// compute accessed address
-	_psxMoveGPRtoR(ecx, (op >> 21) & 0x1F);
+	_psxMoveGPRtoR(ecx, (op >> 21) & 0x1F, false);
 	if ((s16)op != 0)
 		xADD(ecx, (s16)op);
 
@@ -1382,7 +1420,7 @@ static void psxRecMemcheck(u32 op, u32 bits, bool store)
 	// ecx = access address
 	// edx = access address+size
 
-	auto checks = CBreakPoints::GetMemChecks(BREAKPOINT_IOP);
+	const auto checks = CBreakPoints::GetMemChecks(BREAKPOINT_IOP);
 	for (size_t i = 0; i < checks.size(); i++)
 	{
 		if (checks[i].result == 0)
@@ -1477,6 +1515,8 @@ void psxRecompileNextInstruction(bool delayslot, bool swapped_delayslot)
 			ZydisFormatterInit(&disas_formatter, ZYDIS_FORMATTER_STYLE_INTEL);
 			s_old_print_address = (ZydisFormatterFunc)&ZydisFormatterPrintAddressAbsolute;
 			ZydisFormatterSetHook(&disas_formatter, ZYDIS_FORMATTER_FUNC_PRINT_ADDRESS_ABS, (const void**)&s_old_print_address);
+			s_old_print_disp = (ZydisFormatterFunc)&ZydisFormatterPrintDisplacement;
+			ZydisFormatterSetHook(&disas_formatter, ZYDIS_FORMATTER_FUNC_PRINT_DISP, (const void**)&s_old_print_disp);
 		}
 	}
 #endif

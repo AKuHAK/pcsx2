@@ -31,11 +31,13 @@ namespace ImGuiFullscreen
 	static constexpr float LAYOUT_LARGE_FONT_SIZE = 22.0f;
 	static constexpr float LAYOUT_MEDIUM_FONT_SIZE = 14.0f;
 	static constexpr float LAYOUT_SMALL_FONT_SIZE = 10.0f;
+	static constexpr float LAYOUT_MENU_BACKGROUND_OPACITY = 0.5f;
 	static constexpr float LAYOUT_MENU_BUTTON_HEIGHT = 50.0f;
 	static constexpr float LAYOUT_MENU_BUTTON_HEIGHT_NO_SUMMARY = 26.0f;
 	static constexpr float LAYOUT_MENU_BUTTON_X_PADDING = 15.0f;
 	static constexpr float LAYOUT_MENU_BUTTON_Y_PADDING = 10.0f;
 	static constexpr float LAYOUT_MENU_WINDOW_X_PADDING = 12.0f;
+	static constexpr float LAYOUT_SIDEBAR_WIDTH = 220.0f;
 	static constexpr float LAYOUT_FOOTER_PADDING = 10.0f;
 	static constexpr float LAYOUT_FOOTER_HEIGHT = LAYOUT_MEDIUM_FONT_SIZE + LAYOUT_FOOTER_PADDING * 2.0f;
 	static constexpr float LAYOUT_HORIZONTAL_MENU_HEIGHT = 320.0f;
@@ -64,6 +66,7 @@ namespace ImGuiFullscreen
 	extern ImVec4 UIPrimaryLightColor;
 	extern ImVec4 UIPrimaryDarkColor;
 	extern ImVec4 UIPrimaryTextColor;
+	extern ImVec4 UITextShadowColor;
 	extern ImVec4 UITextHighlightColor;
 	extern ImVec4 UIPrimaryLineColor;
 	extern ImVec4 UISecondaryColor;
@@ -157,6 +160,19 @@ namespace ImGuiFullscreen
 	bool BeginFullscreenColumnWindow(float start, float end, const char* name, const ImVec4& background = UIBackgroundColor);
 	void EndFullscreenColumnWindow();
 
+	struct SidebarState
+	{
+		bool has_focus = false;
+		bool focus_requested = false;
+	};
+	void BeginSidebar(const char* name, float width, SidebarState& state);
+	bool SidebarItem(const char* str_id, bool selected, bool default_focus, const char* title, const char* summary, const char* icon,
+		GSTexture* badge, SidebarState& state);
+	void EndSidebar(SidebarState& state);
+
+	/// Call this inside the content child next to the sidebar.
+	void UpdateSidebarFocus(SidebarState& state);
+
 	bool BeginFullscreenWindow(float left, float top, float width, float height, const char* name,
 		const ImVec4& background = HEX_TO_IMVEC4(0x212121, 0xFF), float rounding = 0.0f, const ImVec2& padding = ImVec2(),
 		ImGuiWindowFlags flags = 0);
@@ -194,7 +210,7 @@ namespace ImGuiFullscreen
 	void PrerenderMenuButtonBorder();
 	void AddTextWithShadow(ImDrawList* dl, std::pair<ImFont*, float> font, const ImVec2& pos, ImU32 col, const char* text,
 		const char* text_end = nullptr, float wrap_width = 0.0f, const ImVec4* cpu_fine_clip_rect = nullptr,
-		ImU32 shadow_col = IM_COL32(0, 0, 0, 64), bool strip_id_suffix = false);
+		ImU32 shadow_col = ImGui::GetColorU32(UITextShadowColor), bool strip_id_suffix = false);
 	void RenderTextClippedWithShadow(const ImVec2& pos_min, const ImVec2& pos_max, const char* text, const char* text_end = nullptr,
 		const ImVec2* text_size_if_known = nullptr, const ImVec2& align = ImVec2(0.0f, 0.0f), const ImRect* clip_rect = nullptr);
 	void BeginMenuButtons(u32 num_items = 0, float y_align = 0.0f, float x_padding = LAYOUT_MENU_BUTTON_X_PADDING,

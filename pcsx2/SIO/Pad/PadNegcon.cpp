@@ -307,7 +307,7 @@ const Pad::ControllerInfo& PadNegcon::GetInfo() const
 
 void PadNegcon::Set(u32 index, float value)
 {
-	if (index > Inputs::LENGTH)
+	if (index >= Inputs::LENGTH)
 	{
 		return;
 	}
@@ -373,6 +373,10 @@ void PadNegcon::SetAxisScale(float deadzone, float scale)
 {
 	this->twistDeadzone = deadzone;
 	this->twistScale = scale;
+}
+
+void PadNegcon::SetDiagonalScaleCorrection(bool enabled)
+{
 }
 
 float PadNegcon::GetVibrationScale(u32 motor) const

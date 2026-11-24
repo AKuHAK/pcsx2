@@ -34,9 +34,9 @@ namespace GLState
 
 	GLuint ps_ss;
 
-	GSTextureOGL* rt = nullptr;
-	GSTextureOGL* ds_as_rt = nullptr;
-	GSTextureOGL* ds = nullptr;
+	GSTextureOGL* current_rt = nullptr;
+	GSTextureOGL* current_ds_as_rt = nullptr;
+	GSTextureOGL* current_ds = nullptr;
 
 	bool rt_written;
 	bool ds_as_rt_written;
@@ -45,11 +45,10 @@ namespace GLState
 	u32 draw_buffers;
 
 	GLuint tex_unit[8];
-	GLuint64 tex_handle[8];
 
 	u32 UpdateDrawBuffers()
 	{
-		draw_buffers = ds_as_rt ? 2 : 1;
+		draw_buffers = current_ds_as_rt ? 2 : 1;
 		return draw_buffers;
 	}
 
@@ -79,9 +78,9 @@ namespace GLState
 
 		ps_ss = 0;
 
-		rt = nullptr;
-		ds_as_rt = nullptr;
-		ds = nullptr;
+		current_rt = nullptr;
+		current_ds_as_rt = nullptr;
+		current_ds = nullptr;
 
 		rt_written = false;
 		ds_as_rt_written = false;
@@ -90,6 +89,5 @@ namespace GLState
 		draw_buffers = 0;
 
 		std::fill(std::begin(tex_unit), std::end(tex_unit), 0);
-		std::fill(std::begin(tex_handle), std::end(tex_handle), 0);
 	}
 } // namespace GLState

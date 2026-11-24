@@ -14,8 +14,8 @@
   "sources": [
     {
       "type": "archive",
-      "url": "https://libsdl.org/release/SDL3-3.4.8.tar.gz",
-      "sha256": "e9fff7467fb60f037e6708da18b25560649e4c63edc2a69bb871b960d9cbfbba"
+      "url": "https://github.com/libsdl-org/SDL/releases/download/release-3.4.20/SDL3-3.4.20.tar.gz",
+      "sha256": "f3bb06f55bed9557227a700af2ea62e49497ebdf58037732a731a5fb3ef8581f"
     }
   ],
   "cleanup": [

@@ -163,6 +163,14 @@ especially to test compatibility with D3D12_RESOURCE_HEAP_TIER_1 on modern GPUs.
     #endif
 #endif
 
+#ifndef D3D12MA_OPTIONS4_SUPPORTED
+    #ifdef __ID3D12Device5_INTERFACE_DEFINED__
+        #define D3D12MA_OPTIONS4_SUPPORTED 1
+    #else
+        #define D3D12MA_OPTIONS4_SUPPORTED 0
+    #endif
+#endif
+
 #ifndef D3D12MA_DEBUG_LOG
    #define D3D12MA_DEBUG_LOG(format, ...)
    /*
@@ -181,6 +189,30 @@ especially to test compatibility with D3D12_RESOURCE_HEAP_TIER_1 on modern GPUs.
 //
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
+
+#if defined(__clang__) || defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#pragma GCC diagnostic ignored "-Wsign-compare"
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#pragma GCC diagnostic ignored "-Wswitch"
+#pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
+#pragma GCC diagnostic ignored "-Wunused-function"
+#endif
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
+
+#if defined(__clang__)
+#pragma GCC diagnostic ignored "-Wtautological-undefined-compare"
+#endif
+
+#if defined(__GNUC__) && !defined(_M_ARM64)
+#pragma GCC diagnostic ignored "-Wnonnull-compare"
+#endif
+
 
 #define D3D12MA_IID_PPV_ARGS(ppType)   __uuidof(**(ppType)), reinterpret_cast<void**>(ppType)
 
@@ -703,6 +735,13 @@ static UINT GetBitsPerPixel(DXGI_FORMAT format)
     case DXGI_FORMAT_R24_UNORM_X8_TYPELESS:
     case DXGI_FORMAT_X24_TYPELESS_G8_UINT:
         return 32;
+    case DXGI_FORMAT_B8G8R8A8_UNORM:
+    case DXGI_FORMAT_B8G8R8X8_UNORM:
+    case DXGI_FORMAT_B8G8R8A8_TYPELESS:
+    case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+    case DXGI_FORMAT_B8G8R8X8_TYPELESS:
+    case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+        return 32;
     case DXGI_FORMAT_R8G8_TYPELESS:
     case DXGI_FORMAT_R8G8_UNORM:
     case DXGI_FORMAT_R8G8_UINT:
@@ -716,6 +755,9 @@ static UINT GetBitsPerPixel(DXGI_FORMAT format)
     case DXGI_FORMAT_R16_UINT:
     case DXGI_FORMAT_R16_SNORM:
     case DXGI_FORMAT_R16_SINT:
+        return 16;
+    case DXGI_FORMAT_B5G6R5_UNORM:
+    case DXGI_FORMAT_B5G5R5A1_UNORM:
         return 16;
     case DXGI_FORMAT_R8_TYPELESS:
     case DXGI_FORMAT_R8_UNORM:
@@ -767,46 +809,175 @@ static ResourceClass ResourceDescToResourceClass(const D3D12_RESOURCE_DESC_T& re
         (resDesc.Flags & (D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL)) != 0;
     return isRenderTargetOrDepthStencil ? ResourceClass::RT_DS_Texture : ResourceClass::Non_RT_DS_Texture;
 }
+
+static bool ResourceDimensionIsTexture(D3D12_RESOURCE_DIMENSION dimension)
+{
+    return dimension == D3D12_RESOURCE_DIMENSION_TEXTURE1D ||
+        dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
+        dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D;
+}
+
+static bool ResourceFlagsContainRenderTargetOrDepthStencil(D3D12_RESOURCE_FLAGS flags)
+{
+    return (flags & (D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL)) != 0;
+}
     
-// This algorithm is overly conservative.
+struct SmallAlignmentTileShape
+{
+    UINT Width;
+    UINT Height;
+    UINT Depth;
+};
+
+static bool GetSmallAlignmentTileShape(
+    D3D12_RESOURCE_DIMENSION dimension,
+    bool isMsaa,
+    UINT bitsPerUnit,
+    SmallAlignmentTileShape& outTileShape)
+{
+    if (isMsaa)
+    {
+        if (dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D)
+            return false;
+
+        switch (bitsPerUnit)
+        {
+        case    8: outTileShape = { 256, 256, 1 }; return true;
+        case   16: outTileShape = { 256, 128, 1 }; return true;
+        case   32: outTileShape = { 128, 128, 1 }; return true;
+        case   64: outTileShape = { 128,  64, 1 }; return true;
+        case  128: outTileShape = {  64,  64, 1 }; return true;
+        case  256: outTileShape = {  64,  32, 1 }; return true;
+        case  512: outTileShape = {  32,  32, 1 }; return true;
+        case 1024: outTileShape = {  32,  16, 1 }; return true;
+        case 2048: outTileShape = {  16,  16, 1 }; return true;
+        default: return false;
+        }
+    }
+
+    switch (dimension)
+    {
+    case D3D12_RESOURCE_DIMENSION_TEXTURE1D:
+        switch (bitsPerUnit)
+        {
+        case   8: outTileShape = { 4096, 1, 1 }; return true;
+        case  16: outTileShape = { 2048, 1, 1 }; return true;
+        case  32: outTileShape = { 1024, 1, 1 }; return true;
+        case  64: outTileShape = {  512, 1, 1 }; return true;
+        case 128: outTileShape = {  256, 1, 1 }; return true;
+        default: return false;
+        }
+
+    case D3D12_RESOURCE_DIMENSION_TEXTURE2D:
+        switch (bitsPerUnit)
+        {
+        case   8: outTileShape = { 64, 64, 1 }; return true;
+        case  16: outTileShape = { 64, 32, 1 }; return true;
+        case  32: outTileShape = { 32, 32, 1 }; return true;
+        case  64: outTileShape = { 32, 16, 1 }; return true;
+        case 128: outTileShape = { 16, 16, 1 }; return true;
+        default: return false;
+        }
+
+    case D3D12_RESOURCE_DIMENSION_TEXTURE3D:
+        // 4 KB counterparts of the documented 64 KB volume-tile shapes.
+        switch (bitsPerUnit)
+        {
+        case   8: outTileShape = { 16, 16, 16 }; return true;
+        case  16: outTileShape = { 16, 16,  8 }; return true;
+        case  32: outTileShape = { 16,  8,  8 }; return true;
+        case  64: outTileShape = {  8,  8,  8 }; return true;
+        case 128: outTileShape = {  8,  8,  4 }; return true;
+        default: return false;
+        }
+
+    default:
+        return false;
+    }
+}
+
+// This algorithm is overly conservative and applies only to the legacy small-alignment heuristic path.
 template<typename D3D12_RESOURCE_DESC_T>
 static bool CanUseSmallAlignment(const D3D12_RESOURCE_DESC_T& resourceDesc)
 {
-    if (resourceDesc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D)
+    if (resourceDesc.SampleDesc.Count == 0 ||
+        resourceDesc.Layout != D3D12_TEXTURE_LAYOUT_UNKNOWN ||
+        resourceDesc.Width > UINT_MAX)
+    {
         return false;
-    if ((resourceDesc.Flags & (D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL)) != 0)
+    }
+
+    const bool isMsaa = resourceDesc.SampleDesc.Count > 1;
+    const bool isRtDs = ResourceFlagsContainRenderTargetOrDepthStencil(resourceDesc.Flags);
+    if (isMsaa && !isRtDs)
+    {
         return false;
-    if (resourceDesc.SampleDesc.Count > 1)
+    }
+    if (!isMsaa &&
+        isRtDs)
+    {
         return false;
-    if (resourceDesc.DepthOrArraySize != 1)
-        return false;
+    }
 
     UINT sizeX = (UINT)resourceDesc.Width;
-    UINT sizeY = resourceDesc.Height;
-    UINT bitsPerPixel = GetBitsPerPixel(resourceDesc.Format);
-    if (bitsPerPixel == 0)
+    UINT sizeY = 1;
+    UINT sizeZ = 1;
+    UINT bitsPerUnit = GetBitsPerPixel(resourceDesc.Format);
+    if (bitsPerUnit == 0)
         return false;
 
-    if (IsFormatCompressed(resourceDesc.Format))
+    switch (resourceDesc.Dimension)
     {
-        sizeX = DivideRoundingUp(sizeX, 4u);
-        sizeY = DivideRoundingUp(sizeY, 4u);
-        bitsPerPixel *= 16;
+    case D3D12_RESOURCE_DIMENSION_TEXTURE1D:
+        if (isMsaa)
+            return false;
+        // For 1D arrays, small-alignment eligibility depends on the mip0 slice size, not array size.
+        if (IsFormatCompressed(resourceDesc.Format))
+            return false;
+        break;
+
+    case D3D12_RESOURCE_DIMENSION_TEXTURE2D:
+        // For 2D arrays, small-alignment eligibility depends on mip0 width/height, not array size.
+        sizeY = resourceDesc.Height;
+        if (isMsaa && IsFormatCompressed(resourceDesc.Format))
+            return false;
+        if (IsFormatCompressed(resourceDesc.Format))
+        {
+            sizeX = DivideRoundingUp(sizeX, 4u);
+            sizeY = DivideRoundingUp(sizeY, 4u);
+            bitsPerUnit *= 16;
+        }
+        break;
+
+    case D3D12_RESOURCE_DIMENSION_TEXTURE3D:
+        if (isMsaa)
+            return false;
+        sizeY = resourceDesc.Height;
+        sizeZ = resourceDesc.DepthOrArraySize;
+        if (IsFormatCompressed(resourceDesc.Format))
+        {
+            sizeX = DivideRoundingUp(sizeX, 4u);
+            sizeY = DivideRoundingUp(sizeY, 4u);
+            bitsPerUnit *= 16;
+        }
+        break;
+
+    default:
+        return false;
     }
 
-    UINT tileSizeX = 0, tileSizeY = 0;
-    switch (bitsPerPixel)
-    {
-    case   8: tileSizeX = 64; tileSizeY = 64; break;
-    case  16: tileSizeX = 64; tileSizeY = 32; break;
-    case  32: tileSizeX = 32; tileSizeY = 32; break;
-    case  64: tileSizeX = 32; tileSizeY = 16; break;
-    case 128: tileSizeX = 16; tileSizeY = 16; break;
-    default: return false;
-    }
+    bitsPerUnit *= resourceDesc.SampleDesc.Count;
 
-    const UINT tileCount = DivideRoundingUp(sizeX, tileSizeX) * DivideRoundingUp(sizeY, tileSizeY);
-    return tileCount <= 16;
+    SmallAlignmentTileShape tileShape = {};
+    if (!GetSmallAlignmentTileShape(resourceDesc.Dimension, isMsaa, bitsPerUnit, tileShape))
+        return false;
+
+    const UINT64 tileCount =
+        UINT64(DivideRoundingUp(sizeX, tileShape.Width)) *
+        UINT64(DivideRoundingUp(sizeY, tileShape.Height)) *
+        UINT64(DivideRoundingUp(sizeZ, tileShape.Depth));
+    // Non-MSAA compares 64 KB against 4 KB tiles => 16 pages. MSAA compares 4 MB against 64 KB tiles => 64 pages.
+    return tileCount <= (isMsaa ? 64 : 16);
 }
     
 static bool ValidateAllocateMemoryParameters(
@@ -5472,12 +5643,30 @@ struct CREATE_RESOURCE_PARAMS
     }
 #endif
 
+#ifdef __ID3D12Device16_INTERFACE_DEFINED__
+    CREATE_RESOURCE_PARAMS(
+        const D3D12_RESOURCE_DESC2* pResourceDesc,
+        D3D12_BARRIER_LAYOUT InitialLayout,
+        const D3D12_CLEAR_VALUE* pOptimizedClearValue,
+        UINT32 NumCastableFormats,
+        const DXGI_FORMAT* pCastableFormats)
+        : Variant(VARIANT_WITH_LAYOUT_AND_DESC2)
+        , pResourceDesc2(pResourceDesc)
+        , InitialLayout(InitialLayout)
+        , pOptimizedClearValue(pOptimizedClearValue)
+        , NumCastableFormats(NumCastableFormats)
+        , pCastableFormats(pCastableFormats)
+    {
+    }
+#endif
+
     enum VARIANT
     {
         VARIANT_INVALID = 0,
         VARIANT_WITH_STATE,
         VARIANT_WITH_STATE_AND_DESC1,
-        VARIANT_WITH_LAYOUT
+        VARIANT_WITH_LAYOUT,
+        VARIANT_WITH_LAYOUT_AND_DESC2
     };
 
     VARIANT Variant = VARIANT_INVALID;
@@ -5494,7 +5683,15 @@ struct CREATE_RESOURCE_PARAMS
     }
     const D3D12_RESOURCE_DESC* GetBaseResourceDesc() const
     {
-        // D3D12_RESOURCE_DESC1 can be cast to D3D12_RESOURCE_DESC by discarding the new members at the end.
+        // Only common fields are read through this view. Native queries and creation always use the full descriptor.
+#ifdef __ID3D12Device16_INTERFACE_DEFINED__
+        if (Variant == VARIANT_WITH_LAYOUT_AND_DESC2)
+            return reinterpret_cast<const D3D12_RESOURCE_DESC*>(pResourceDesc2);
+#endif
+#ifdef __ID3D12Device8_INTERFACE_DEFINED__
+        if (Variant == VARIANT_WITH_STATE_AND_DESC1 || Variant == VARIANT_WITH_LAYOUT)
+            return reinterpret_cast<const D3D12_RESOURCE_DESC*>(pResourceDesc1);
+#endif
         return pResourceDesc;
     }
     D3D12_RESOURCE_STATES GetInitialResourceState() const
@@ -5510,12 +5707,12 @@ struct CREATE_RESOURCE_PARAMS
 #ifdef __ID3D12Device8_INTERFACE_DEFINED__
     const D3D12_RESOURCE_DESC1* GetResourceDesc1() const
     {
-        D3D12MA_ASSERT(Variant >= VARIANT_WITH_STATE_AND_DESC1);
+        D3D12MA_ASSERT(Variant == VARIANT_WITH_STATE_AND_DESC1 || Variant == VARIANT_WITH_LAYOUT);
         return pResourceDesc1;
     }
     const D3D12_RESOURCE_DESC1*& AccessResourceDesc1()
     {
-        D3D12MA_ASSERT(Variant >= VARIANT_WITH_STATE_AND_DESC1);
+        D3D12MA_ASSERT(Variant == VARIANT_WITH_STATE_AND_DESC1 || Variant == VARIANT_WITH_LAYOUT);
         return pResourceDesc1;
     }
 #endif
@@ -5538,12 +5735,28 @@ struct CREATE_RESOURCE_PARAMS
     }
 #endif
 
+#ifdef __ID3D12Device16_INTERFACE_DEFINED__
+    const D3D12_RESOURCE_DESC2* GetResourceDesc2() const
+    {
+        D3D12MA_ASSERT(Variant == VARIANT_WITH_LAYOUT_AND_DESC2);
+        return pResourceDesc2;
+    }
+    const D3D12_RESOURCE_DESC2*& AccessResourceDesc2()
+    {
+        D3D12MA_ASSERT(Variant == VARIANT_WITH_LAYOUT_AND_DESC2);
+        return pResourceDesc2;
+    }
+#endif
+
 private:
     union
     {
         const D3D12_RESOURCE_DESC* pResourceDesc;
 #ifdef __ID3D12Device8_INTERFACE_DEFINED__
         const D3D12_RESOURCE_DESC1* pResourceDesc1;
+#endif
+#ifdef __ID3D12Device16_INTERFACE_DEFINED__
+        const D3D12_RESOURCE_DESC2* pResourceDesc2;
 #endif
     };
     union
@@ -5584,7 +5797,8 @@ public:
         UINT32 algorithm,
         bool denyMsaaTextures,
         ID3D12ProtectedResourceSession* pProtectedSession,
-        D3D12_RESIDENCY_PRIORITY residencyPriority);
+        D3D12_RESIDENCY_PRIORITY residencyPriority,
+        PoolPimpl* pool = NULL);
     ~BlockVector();
     D3D12_RESIDENCY_PRIORITY GetResidencyPriority() const { return m_ResidencyPriority; }
 
@@ -5593,6 +5807,7 @@ public:
     UINT64 GetPreferredBlockSize() const { return m_PreferredBlockSize; }
     UINT32 GetAlgorithm() const { return m_Algorithm; }
     bool DeniesMsaaTextures() const { return m_DenyMsaaTextures; }
+    PoolPimpl* GetPool() const { return m_Pool; }
     // To be used only while the m_Mutex is locked. Used during defragmentation.
     size_t GetBlockCount() const { return m_Blocks.size(); }
     // To be used only while the m_Mutex is locked. Used during defragmentation.
@@ -5606,7 +5821,6 @@ public:
         UINT64 size,
         UINT64 alignment,
         const ALLOCATION_DESC& allocDesc,
-        bool committedAllowed,
         size_t allocationCount,
         Allocation** pAllocations);
 
@@ -5617,7 +5831,6 @@ public:
         UINT64 alignment,
         const ALLOCATION_DESC& allocDesc,
         const CREATE_RESOURCE_PARAMS& createParams,
-        bool committedAllowed,
         Allocation** ppAllocation,
         REFIID riidResource,
         void** ppvResource);
@@ -5640,6 +5853,7 @@ private:
     const bool m_DenyMsaaTextures;
     ID3D12ProtectedResourceSession* const m_ProtectedSession;
     const D3D12_RESIDENCY_PRIORITY m_ResidencyPriority;
+    PoolPimpl* const m_Pool;
     /* There can be at most one allocation that is completely empty - a
     hysteresis to avoid pessimistic case of alternating creation and destruction
     of a ID3D12Heap. */
@@ -5668,7 +5882,6 @@ private:
         UINT64 size,
         UINT64 alignment,
         const ALLOCATION_DESC& allocDesc,
-        bool committedAllowed,
         Allocation** pAllocation);
 
     HRESULT AllocateFromBlock(
@@ -5988,6 +6201,7 @@ public:
     BOOL IsCacheCoherentUMA() const { return m_D3D12Architecture.CacheCoherentUMA; }
     bool SupportsResourceHeapTier2() const { return m_D3D12Options.ResourceHeapTier >= D3D12_RESOURCE_HEAP_TIER_2; }
     bool IsGPUUploadHeapSupported() const { return m_GPUUploadHeapSupported != FALSE; }
+    bool IsMsaa64KBAlignedTextureSupported() const { return m_MSAA64KBAlignedTextureSupported != FALSE; }
     bool IsTightAlignmentSupported() const { return m_TightAlignmentSupported != FALSE; }
     bool IsTightAlignmentEnabled() const { return IsTightAlignmentSupported() && m_UseTightAlignment; }
     bool UseMutex() const { return m_UseMutex; }
@@ -6065,7 +6279,7 @@ public:
     void CalculateStatistics(TotalStatistics& outStats, DetailedStatistics outCustomHeaps[2] = NULL);
 
     void GetBudget(Budget* outLocalBudget, Budget* outNonLocalBudget);
-    void GetBudgetForHeapType(Budget& outBudget, D3D12_HEAP_TYPE heapType);
+    void GetBudgetForHeapProperties(Budget& outBudget, const D3D12_HEAP_PROPERTIES& heapProps);
 
     void BuildStatsString(WCHAR** ppStatsString, BOOL detailedMap);
     void FreeStatsString(WCHAR* pStatsString);
@@ -6073,10 +6287,12 @@ public:
 private:
     using PoolList = IntrusiveLinkedList<PoolListItemTraits>;
 
+    HRESULT CheckFeatureSupport(D3D12_FEATURE feature, void* featureSupportData, UINT featureSupportDataSize) const;
+
     const bool m_UseMutex;
     const bool m_AlwaysCommitted;
     const bool m_MsaaAlwaysCommitted;
-    bool m_PreferSmallBuffersCommitted;
+    const bool m_PreferSmallBuffersCommitted;
     const bool m_UseTightAlignment;
     bool m_DefaultPoolsNotZeroed = false;
     ID3D12Device* m_Device; // AddRef
@@ -6095,6 +6311,10 @@ private:
 #ifdef __ID3D12Device12_INTERFACE_DEFINED__
     ID3D12Device12* m_Device12 = NULL;  // AddRef, optional
 #endif
+#ifdef __ID3D12Device16_INTERFACE_DEFINED__
+    ID3D12Device16* m_Device16 = NULL;  // AddRef, optional
+    UINT m_SDKVersion = 0; // 0 selects legacy feature queries.
+#endif
     IDXGIAdapter* m_Adapter; // AddRef
 #if D3D12MA_DXGI_1_4
     IDXGIAdapter3* m_Adapter3 = NULL; // AddRef, optional
@@ -6105,6 +6325,7 @@ private:
     DXGI_ADAPTER_DESC m_AdapterDesc;
     D3D12_FEATURE_DATA_D3D12_OPTIONS m_D3D12Options;
     BOOL m_GPUUploadHeapSupported = FALSE;
+    BOOL m_MSAA64KBAlignedTextureSupported = FALSE;
     BOOL m_TightAlignmentSupported = FALSE;
     D3D12_FEATURE_DATA_ARCHITECTURE m_D3D12Architecture;
     AllocationObjectAllocator m_AllocationObjectAllocator;
@@ -6121,7 +6342,7 @@ private:
     */
     template<typename D3D12_RESOURCE_DESC_T>
     bool PrefersCommittedAllocation(const D3D12_RESOURCE_DESC_T& resourceDesc,
-        ALLOCATION_FLAGS strategy);
+        ALLOCATION_FLAGS strategy, bool useTightAlignment) const;
 
     // Allocates and registers new committed resource with implicit heap, as dedicated allocation.
     // Creates and returns Allocation object and optionally D3D12 resource.
@@ -6130,7 +6351,10 @@ private:
         UINT64 resourceSize, bool withinBudget, void* pPrivateData,
         const CREATE_RESOURCE_PARAMS& createParams,
         Allocation** ppAllocation, REFIID riidResource, void** ppvResource);
-
+    HRESULT CreateCommittedResourceWrap(
+        const CommittedAllocationParameters& committedAllocParams,
+        const CREATE_RESOURCE_PARAMS& createParams,
+        ID3D12Resource** ppResource);
     // Allocates and registers new heap without any resources placed in it, as dedicated allocation.
     // Creates and returns Allocation object.
     HRESULT AllocateHeap(
@@ -6141,7 +6365,11 @@ private:
     template<typename D3D12_RESOURCE_DESC_T>
     HRESULT CalcAllocationParams(const ALLOCATION_DESC& allocDesc, UINT64 allocSize,
         const D3D12_RESOURCE_DESC_T* resDesc, // Optional
+        bool useTightAlignment,
         BlockVector*& outBlockVector, CommittedAllocationParameters& outCommittedAllocationParams, bool& outPreferCommitted);
+    bool PrefersCommittedAllocationOverBudget(
+        const CommittedAllocationParameters& committedAllocParams,
+        UINT64 allocSize);
 
     // Returns UINT32_MAX if index cannot be calculcated.
     UINT CalcDefaultPoolIndex(const ALLOCATION_DESC& allocDesc, ResourceClass resourceClass) const;
@@ -6170,13 +6398,23 @@ private:
     D3D12_RESOURCE_ALLOCATION_INFO GetResourceAllocationInfo3Native(const D3D12_RESOURCE_DESC1& resourceDesc,
         UINT32 NumCastableFormats, const DXGI_FORMAT* pCastableFormats) const;
 #endif
+#ifdef __ID3D12Device16_INTERFACE_DEFINED__
+    D3D12_RESOURCE_ALLOCATION_INFO GetResourceAllocationInfo4Native(const D3D12_RESOURCE_DESC2& resourceDesc,
+        UINT32 NumCastableFormats, const DXGI_FORMAT* pCastableFormats) const;
+    HRESULT GetResourceAllocationInfoMiddle(D3D12_RESOURCE_DESC2& inOutResourceDesc,
+        UINT32 NumCastableFormats, const DXGI_FORMAT* pCastableFormats,
+        D3D12_RESOURCE_ALLOCATION_INFO& outAllocInfo) const;
+#endif
 
     template<typename D3D12_RESOURCE_DESC_T>
     HRESULT GetResourceAllocationInfo(D3D12_RESOURCE_DESC_T& inOutResourceDesc,
         UINT32 NumCastableFormats, const DXGI_FORMAT* pCastableFormats,
-        D3D12_RESOURCE_ALLOCATION_INFO& outAllocInfo) const;
+        D3D12_RESOURCE_ALLOCATION_INFO& outAllocInfo,
+        bool useTightAlignment) const;
 
-    bool NewAllocationWithinBudget(D3D12_HEAP_TYPE heapType, UINT64 size);
+    bool IsTightAlignmentEnabled(const ALLOCATION_DESC& allocDesc) const;
+
+        bool NewAllocationWithinBudget(const D3D12_HEAP_PROPERTIES& heapProps, UINT64 size);
 
     // Writes object { } with data of given budget.
     static void WriteBudgetToJson(JsonWriter& json, const Budget& budget);
@@ -6217,6 +6455,18 @@ AllocatorPimpl::AllocatorPimpl(const ALLOCATION_CALLBACKS& allocationCallbacks, 
 
 HRESULT AllocatorPimpl::Init(const ALLOCATOR_DESC& desc)
 {
+#ifdef __ID3D12Device16_INTERFACE_DEFINED__
+    m_Device->QueryInterface(D3D12MA_IID_PPV_ARGS(&m_Device16));
+#ifdef __ID3D12DeviceConfiguration_INTERFACE_DEFINED__
+    ID3D12DeviceConfiguration* deviceConfiguration = NULL;
+    if (SUCCEEDED(m_Device->QueryInterface(D3D12MA_IID_PPV_ARGS(&deviceConfiguration))))
+    {
+        m_SDKVersion = deviceConfiguration->GetDesc().SDKVersion;
+        deviceConfiguration->Release();
+    }
+#endif // #ifdef __ID3D12DeviceConfiguration_INTERFACE_DEFINED__
+#endif // #ifdef __ID3D12Device16_INTERFACE_DEFINED__
+
 #if D3D12MA_DXGI_1_4
     desc.pAdapter->QueryInterface(D3D12MA_IID_PPV_ARGS(&m_Adapter3));
 #endif
@@ -6235,7 +6485,7 @@ HRESULT AllocatorPimpl::Init(const ALLOCATOR_DESC& desc)
     if((desc.Flags & ALLOCATOR_FLAG_DEFAULT_POOLS_NOT_ZEROED) != 0)
     {
         D3D12_FEATURE_DATA_D3D12_OPTIONS7 options7 = {};
-        if(SUCCEEDED(m_Device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS7, &options7, sizeof(options7))))
+        if(SUCCEEDED(CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS7, &options7, sizeof(options7))))
         {
             // DEFAULT_POOLS_NOT_ZEROED both supported and enabled by the user.
             m_DefaultPoolsNotZeroed = true;
@@ -6257,7 +6507,7 @@ HRESULT AllocatorPimpl::Init(const ALLOCATOR_DESC& desc)
         return hr;
     }
 
-    hr = m_Device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &m_D3D12Options, sizeof(m_D3D12Options));
+    hr = CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &m_D3D12Options, sizeof(m_D3D12Options));
     if (FAILED(hr))
     {
         return hr;
@@ -6269,7 +6519,7 @@ HRESULT AllocatorPimpl::Init(const ALLOCATOR_DESC& desc)
 #if D3D12MA_OPTIONS16_SUPPORTED
     {
         D3D12_FEATURE_DATA_D3D12_OPTIONS16 options16 = {};
-        hr = m_Device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS16, &options16, sizeof(options16));
+        hr = CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS16, &options16, sizeof(options16));
         if (SUCCEEDED(hr))
         {
             m_GPUUploadHeapSupported = options16.GPUUploadHeapSupported;
@@ -6277,26 +6527,30 @@ HRESULT AllocatorPimpl::Init(const ALLOCATOR_DESC& desc)
     }
 #endif // #if D3D12MA_OPTIONS16_SUPPORTED
 
+#if D3D12MA_OPTIONS4_SUPPORTED
+    {
+        D3D12_FEATURE_DATA_D3D12_OPTIONS4 options4 = {};
+        hr = CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS4, &options4, sizeof(options4));
+        if (SUCCEEDED(hr))
+        {
+            m_MSAA64KBAlignedTextureSupported = options4.MSAA64KBAlignedTextureSupported;
+        }
+    }
+#endif // #if D3D12MA_OPTIONS4_SUPPORTED
+
 #if D3D12MA_TIGHT_ALIGNMENT_SUPPORTED
     {
         D3D12_FEATURE_DATA_TIGHT_ALIGNMENT tightAlignment = {};
-        hr = m_Device->CheckFeatureSupport(D3D12_FEATURE_D3D12_TIGHT_ALIGNMENT, &tightAlignment, sizeof(tightAlignment));
+        hr = CheckFeatureSupport(D3D12_FEATURE_D3D12_TIGHT_ALIGNMENT, &tightAlignment, sizeof(tightAlignment));
         if (SUCCEEDED(hr))
         {
             m_TightAlignmentSupported = tightAlignment.SupportTier >= D3D12_TIGHT_ALIGNMENT_TIER_1;
             
-            // If tight alignment is supported (checked by the code above) and wasn't disabled by the developer
-            // (with ALLOCATOR_FLAG_DONT_USE_TIGHT_ALIGNMENT), disable the preference for creating small buffers as committed,
-            // as if ALLOCATOR_FLAG_DONT_PREFER_SMALL_BUFFERS_COMMITTED was specified.
-            if (IsTightAlignmentEnabled())
-            {
-                m_PreferSmallBuffersCommitted = false;
-            }
         }
     }
 #endif // #if D3D12MA_TIGHT_ALIGNMENT_SUPPORTED
 
-    hr = m_Device->CheckFeatureSupport(D3D12_FEATURE_ARCHITECTURE, &m_D3D12Architecture, sizeof(m_D3D12Architecture));
+    hr = CheckFeatureSupport(D3D12_FEATURE_ARCHITECTURE, &m_D3D12Architecture, sizeof(m_D3D12Architecture));
     if (FAILED(hr))
     {
         m_D3D12Architecture.UMA = FALSE;
@@ -6345,6 +6599,9 @@ AllocatorPimpl::~AllocatorPimpl()
 #ifdef __ID3D12Device12_INTERFACE_DEFINED__
     SAFE_RELEASE(m_Device12);
 #endif
+#ifdef __ID3D12Device16_INTERFACE_DEFINED__
+    SAFE_RELEASE(m_Device16);
+#endif
 #ifdef __ID3D12Device10_INTERFACE_DEFINED__
     SAFE_RELEASE(m_Device10);
 #endif
@@ -6375,6 +6632,17 @@ AllocatorPimpl::~AllocatorPimpl()
             D3D12MA_ASSERT(0 && "Unfreed pools found!");
         }
     }
+}
+
+HRESULT AllocatorPimpl::CheckFeatureSupport(D3D12_FEATURE feature, void* featureSupportData, UINT featureSupportDataSize) const
+{
+#ifdef __ID3D12Device16_INTERFACE_DEFINED__
+    if (m_Device16 != NULL && m_SDKVersion != 0)
+    {
+        return m_Device16->CheckFeatureSupport1(feature, featureSupportData, featureSupportDataSize, m_SDKVersion);
+    }
+#endif
+    return m_Device->CheckFeatureSupport(feature, featureSupportData, featureSupportDataSize);
 }
 
 bool AllocatorPimpl::HeapFlagsFulfillResourceHeapTier(D3D12_HEAP_FLAGS flags) const
@@ -6434,6 +6702,17 @@ HRESULT AllocatorPimpl::CreatePlacedResourceWrap(
     REFIID riidResource,
     void** ppvResource)
 {
+#ifdef __ID3D12Device16_INTERFACE_DEFINED__
+    if (createParams.Variant == CREATE_RESOURCE_PARAMS::VARIANT_WITH_LAYOUT_AND_DESC2)
+    {
+        if (!m_Device16)
+            return E_NOINTERFACE;
+        return m_Device16->CreatePlacedResource3(pHeap, HeapOffset,
+            createParams.GetResourceDesc2(), createParams.GetInitialLayout(),
+            createParams.GetOptimizedClearValue(), createParams.GetNumCastableFormats(),
+            createParams.GetCastableFormats(), riidResource, ppvResource);
+    }
+#endif
 #ifdef __ID3D12Device10_INTERFACE_DEFINED__
     if (createParams.Variant == CREATE_RESOURCE_PARAMS::VARIANT_WITH_LAYOUT)
     {
@@ -6490,17 +6769,21 @@ HRESULT AllocatorPimpl::CreateResource(
     }
 
     HRESULT hr = E_NOINTERFACE;
+    const bool useTightAlignment = IsTightAlignmentEnabled(*pAllocDesc);
     CREATE_RESOURCE_PARAMS finalCreateParams = createParams;
     D3D12_RESOURCE_DESC finalResourceDesc;
 #ifdef __ID3D12Device8_INTERFACE_DEFINED__
     D3D12_RESOURCE_DESC1 finalResourceDesc1;
+#endif
+#ifdef __ID3D12Device16_INTERFACE_DEFINED__
+    D3D12_RESOURCE_DESC2 finalResourceDesc2;
 #endif
     D3D12_RESOURCE_ALLOCATION_INFO resAllocInfo;
     if (createParams.Variant == CREATE_RESOURCE_PARAMS::VARIANT_WITH_STATE)
     {
         finalResourceDesc = *createParams.GetResourceDesc();
         finalCreateParams.AccessResourceDesc() = &finalResourceDesc;
-        hr = GetResourceAllocationInfo(finalResourceDesc, 0, NULL, resAllocInfo);
+        hr = GetResourceAllocationInfo(finalResourceDesc, 0, NULL, resAllocInfo, useTightAlignment);
     }
 #ifdef __ID3D12Device8_INTERFACE_DEFINED__
     else if (createParams.Variant == CREATE_RESOURCE_PARAMS::VARIANT_WITH_STATE_AND_DESC1)
@@ -6509,7 +6792,7 @@ HRESULT AllocatorPimpl::CreateResource(
         {
             finalResourceDesc1 = *createParams.GetResourceDesc1();
             finalCreateParams.AccessResourceDesc1() = &finalResourceDesc1;
-            hr = GetResourceAllocationInfo(finalResourceDesc1, 0, NULL, resAllocInfo);
+            hr = GetResourceAllocationInfo(finalResourceDesc1, 0, NULL, resAllocInfo, useTightAlignment);
         }
     }
 #endif
@@ -6521,7 +6804,19 @@ HRESULT AllocatorPimpl::CreateResource(
             finalResourceDesc1 = *createParams.GetResourceDesc1();
             finalCreateParams.AccessResourceDesc1() = &finalResourceDesc1;
             hr = GetResourceAllocationInfo(finalResourceDesc1,
-                createParams.GetNumCastableFormats(), createParams.GetCastableFormats(), resAllocInfo);
+                createParams.GetNumCastableFormats(), createParams.GetCastableFormats(), resAllocInfo, useTightAlignment);
+        }
+    }
+#endif
+#ifdef __ID3D12Device16_INTERFACE_DEFINED__
+    else if (createParams.Variant == CREATE_RESOURCE_PARAMS::VARIANT_WITH_LAYOUT_AND_DESC2)
+    {
+        if (m_Device16 != NULL)
+        {
+            finalResourceDesc2 = *createParams.GetResourceDesc2();
+            finalCreateParams.AccessResourceDesc2() = &finalResourceDesc2;
+            hr = GetResourceAllocationInfo(finalResourceDesc2,
+                createParams.GetNumCastableFormats(), createParams.GetCastableFormats(), resAllocInfo, useTightAlignment);
         }
     }
 #endif
@@ -6543,18 +6838,28 @@ HRESULT AllocatorPimpl::CreateResource(
     CommittedAllocationParameters committedAllocationParams = {};
     bool preferCommitted = false;
     
+#ifdef __ID3D12Device16_INTERFACE_DEFINED__
+    if (createParams.Variant == CREATE_RESOURCE_PARAMS::VARIANT_WITH_LAYOUT_AND_DESC2)
+    {
+        hr = CalcAllocationParams<D3D12_RESOURCE_DESC2>(*pAllocDesc, resAllocInfo.SizeInBytes,
+            finalCreateParams.GetResourceDesc2(), useTightAlignment,
+            blockVector, committedAllocationParams, preferCommitted);
+    }
+    else
+#endif
 #ifdef __ID3D12Device8_INTERFACE_DEFINED__
-    if (createParams.Variant >= CREATE_RESOURCE_PARAMS::VARIANT_WITH_STATE_AND_DESC1)
+    if (createParams.Variant == CREATE_RESOURCE_PARAMS::VARIANT_WITH_STATE_AND_DESC1 ||
+        createParams.Variant == CREATE_RESOURCE_PARAMS::VARIANT_WITH_LAYOUT)
     {
         hr = CalcAllocationParams<D3D12_RESOURCE_DESC1>(*pAllocDesc, resAllocInfo.SizeInBytes,
-            createParams.GetResourceDesc1(),
+            createParams.GetResourceDesc1(), useTightAlignment,
             blockVector, committedAllocationParams, preferCommitted);
     }
     else
 #endif
     {
         hr = CalcAllocationParams<D3D12_RESOURCE_DESC>(*pAllocDesc, resAllocInfo.SizeInBytes,
-            createParams.GetResourceDesc(),
+            createParams.GetResourceDesc(), useTightAlignment,
             blockVector, committedAllocationParams, preferCommitted);
     }
     if (FAILED(hr))
@@ -6573,7 +6878,7 @@ HRESULT AllocatorPimpl::CreateResource(
     if (blockVector != NULL)
     {
         hr = blockVector->CreateResource(resAllocInfo.SizeInBytes, resAllocInfo.Alignment,
-            *pAllocDesc, finalCreateParams, committedAllocationParams.IsValid(),
+            *pAllocDesc, finalCreateParams,
             ppAllocation, riidResource, ppvResource);
         if (SUCCEEDED(hr))
             return hr;
@@ -6601,6 +6906,7 @@ HRESULT AllocatorPimpl::AllocateMemory(
     bool preferCommitted = false;
     HRESULT hr = CalcAllocationParams<D3D12_RESOURCE_DESC>(*pAllocDesc, pAllocInfo->SizeInBytes,
         NULL, // pResDesc
+        false, // useTightAlignment - irrelevant for AllocateMemory
         blockVector, committedAllocationParams, preferCommitted);
     if (FAILED(hr))
         return hr;
@@ -6616,7 +6922,7 @@ HRESULT AllocatorPimpl::AllocateMemory(
     if (blockVector != NULL)
     {
         hr = blockVector->Allocate(pAllocInfo->SizeInBytes, pAllocInfo->Alignment,
-            *pAllocDesc, committedAllocationParams.IsValid(), 1, (Allocation**)ppAllocation);
+            *pAllocDesc, 1, (Allocation**)ppAllocation);
         if (SUCCEEDED(hr))
             return hr;
     }
@@ -6638,18 +6944,27 @@ HRESULT AllocatorPimpl::CreateAliasingResource(
 {
     *ppvResource = NULL;
 
+    bool useTightAlignment = IsTightAlignmentEnabled();
+    NormalBlock* block = pAllocation->GetBlock();
+    PoolPimpl* pool = block ? block->GetBlockVector()->GetPool() : pAllocation->m_Committed.list->GetPool();
+    if (pool && (pool->GetDesc().Flags & POOL_FLAG_DONT_USE_TIGHT_ALIGNMENT) != 0)
+        useTightAlignment = false;
+
     HRESULT hr = E_NOINTERFACE;
     CREATE_RESOURCE_PARAMS finalCreateParams = createParams;
     D3D12_RESOURCE_DESC finalResourceDesc;
 #ifdef __ID3D12Device8_INTERFACE_DEFINED__
     D3D12_RESOURCE_DESC1 finalResourceDesc1;
 #endif
+#ifdef __ID3D12Device16_INTERFACE_DEFINED__
+    D3D12_RESOURCE_DESC2 finalResourceDesc2;
+#endif
     D3D12_RESOURCE_ALLOCATION_INFO resAllocInfo;
     if (createParams.Variant == CREATE_RESOURCE_PARAMS::VARIANT_WITH_STATE)
     {
         finalResourceDesc = *createParams.GetResourceDesc();
         finalCreateParams.AccessResourceDesc() = &finalResourceDesc;
-        hr = GetResourceAllocationInfo(finalResourceDesc, 0, NULL, resAllocInfo);
+        hr = GetResourceAllocationInfo(finalResourceDesc, 0, NULL, resAllocInfo, useTightAlignment);
     }
 #ifdef __ID3D12Device8_INTERFACE_DEFINED__
     else if (createParams.Variant == CREATE_RESOURCE_PARAMS::VARIANT_WITH_STATE_AND_DESC1)
@@ -6658,7 +6973,7 @@ HRESULT AllocatorPimpl::CreateAliasingResource(
         {
             finalResourceDesc1 = *createParams.GetResourceDesc1();
             finalCreateParams.AccessResourceDesc1() = &finalResourceDesc1;
-            hr = GetResourceAllocationInfo(finalResourceDesc1, 0, NULL, resAllocInfo);
+            hr = GetResourceAllocationInfo(finalResourceDesc1, 0, NULL, resAllocInfo, useTightAlignment);
         }
     }
 #endif
@@ -6670,7 +6985,19 @@ HRESULT AllocatorPimpl::CreateAliasingResource(
             finalResourceDesc1 = *createParams.GetResourceDesc1();
             finalCreateParams.AccessResourceDesc1() = &finalResourceDesc1;
             hr = GetResourceAllocationInfo(finalResourceDesc1,
-                createParams.GetNumCastableFormats(), createParams.GetCastableFormats(), resAllocInfo);
+                createParams.GetNumCastableFormats(), createParams.GetCastableFormats(), resAllocInfo, useTightAlignment);
+        }
+    }
+#endif
+#ifdef __ID3D12Device16_INTERFACE_DEFINED__
+    else if (createParams.Variant == CREATE_RESOURCE_PARAMS::VARIANT_WITH_LAYOUT_AND_DESC2)
+    {
+        if (m_Device16 != NULL)
+        {
+            finalResourceDesc2 = *createParams.GetResourceDesc2();
+            finalCreateParams.AccessResourceDesc2() = &finalResourceDesc2;
+            hr = GetResourceAllocationInfo(finalResourceDesc2,
+                createParams.GetNumCastableFormats(), createParams.GetCastableFormats(), resAllocInfo, useTightAlignment);
         }
     }
 #endif
@@ -6692,7 +7019,9 @@ HRESULT AllocatorPimpl::CreateAliasingResource(
     const UINT64 newOffset = existingOffset + AllocationLocalOffset;
 
     if (existingHeap == NULL ||
-        AllocationLocalOffset + resAllocInfo.SizeInBytes > existingSize ||
+        AllocationLocalOffset > existingSize ||
+        resAllocInfo.SizeInBytes > existingSize - AllocationLocalOffset ||
+        AllocationLocalOffset > UINT64_MAX - existingOffset ||
         newOffset % resAllocInfo.Alignment != 0)
     {
         return E_INVALIDARG;
@@ -6929,9 +7258,9 @@ void AllocatorPimpl::GetBudget(Budget* outLocalBudget, Budget* outNonLocalBudget
     }
 }
 
-void AllocatorPimpl::GetBudgetForHeapType(Budget& outBudget, D3D12_HEAP_TYPE heapType)
+void AllocatorPimpl::GetBudgetForHeapProperties(Budget& outBudget, const D3D12_HEAP_PROPERTIES& heapProps)
 {
-    const bool isLocal = StandardHeapTypeToMemorySegmentGroup(heapType) ==
+    const bool isLocal = HeapPropertiesToMemorySegmentGroup(heapProps) ==
         DXGI_MEMORY_SEGMENT_GROUP_LOCAL_COPY;
     if (isLocal)
     {
@@ -7305,13 +7634,14 @@ void AllocatorPimpl::FreeStatsString(WCHAR* pStatsString)
 
 template<typename D3D12_RESOURCE_DESC_T>
 bool AllocatorPimpl::PrefersCommittedAllocation(const D3D12_RESOURCE_DESC_T& resourceDesc,
-    ALLOCATION_FLAGS strategy)
+    ALLOCATION_FLAGS strategy, bool useTightAlignment) const
 {
     // Prefer creating small buffers <= 32 KB as committed, because drivers pack them better,
     // while placed buffers require 64 KB alignment.
     if(resourceDesc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER &&
         resourceDesc.Width <= D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT / 2 &&
         strategy != ALLOCATION_FLAG_STRATEGY_MIN_TIME &&  // Creating as committed would be slower.
+        !useTightAlignment &&
         m_PreferSmallBuffersCommitted)
     {
         return true;
@@ -7336,7 +7666,8 @@ HRESULT AllocatorPimpl::AllocateCommittedResource(
     {
         D3D12_RESOURCE_ALLOCATION_INFO heapAllocInfo = {};
         heapAllocInfo.SizeInBytes = resourceSize;
-        heapAllocInfo.Alignment = HeapFlagsToAlignment(committedAllocParams.m_HeapFlags, m_MsaaAlwaysCommitted);
+        // Aliasing uses an explicit heap even for MSAA resources normally created as committed.
+        heapAllocInfo.Alignment = HeapFlagsToAlignment(committedAllocParams.m_HeapFlags, false);
         hr = AllocateHeap(committedAllocParams, heapAllocInfo, withinBudget, pPrivateData, ppAllocation);
         if (SUCCEEDED(hr))
         {
@@ -7353,16 +7684,60 @@ HRESULT AllocatorPimpl::AllocateCommittedResource(
                 }
                 res->Release();
             }
-            FreeHeapMemory(*ppAllocation);
+            // Release the allocation object as well as its heap, and clear the failed output.
+            (*ppAllocation)->ReleaseThis();
+            *ppAllocation = NULL;
         }
         return hr;
     }
 
     if (withinBudget &&
-        !NewAllocationWithinBudget(committedAllocParams.m_HeapProperties.Type, resourceSize))
+        !NewAllocationWithinBudget(committedAllocParams.m_HeapProperties, resourceSize))
     {
         return E_OUTOFMEMORY;
     }
+
+    hr = CreateCommittedResourceWrap(committedAllocParams, createParams, &res);
+    if (FAILED(hr))
+    {
+        return hr;
+    }
+
+    SetResidencyPriority(res, committedAllocParams.m_ResidencyPriority);
+
+    if (ppvResource != NULL)
+    {
+        hr = res->QueryInterface(riidResource, ppvResource);
+    }
+    if (SUCCEEDED(hr))
+    {
+        Allocation* alloc = m_AllocationObjectAllocator.Allocate(
+            this, resourceSize, createParams.GetBaseResourceDesc()->Alignment);
+        alloc->InitCommitted(committedAllocParams.m_List);
+        alloc->SetResourcePointer(res, createParams.GetBaseResourceDesc());
+        alloc->SetPrivateData(pPrivateData);
+
+        *ppAllocation = alloc;
+
+        committedAllocParams.m_List->Register(alloc);
+
+        const UINT memSegmentGroup = HeapPropertiesToMemorySegmentGroup(committedAllocParams.m_HeapProperties);
+        m_Budget.AddBlock(memSegmentGroup, resourceSize);
+        m_Budget.AddAllocation(memSegmentGroup, resourceSize);
+    }
+    else
+    {
+        res->Release();
+    }
+    return hr;
+}
+
+HRESULT AllocatorPimpl::CreateCommittedResourceWrap(
+    const CommittedAllocationParameters& committedAllocParams,
+    const CREATE_RESOURCE_PARAMS& createParams,
+    ID3D12Resource** ppResource)
+{
+    *ppResource = NULL;
 
     /* D3D12 ERROR:
      * ID3D12Device::CreateCommittedResource:
@@ -7373,8 +7748,23 @@ HRESULT AllocatorPimpl::AllocateCommittedResource(
      * These flags will be set automatically to correspond with the committed resource type.
      *
      * [ STATE_CREATION ERROR #640: CREATERESOURCEANDHEAP_INVALIDHEAPMISCFLAGS]
-    */
+     */
 
+    HRESULT hr;
+#ifdef __ID3D12Device16_INTERFACE_DEFINED__
+    if (createParams.Variant == CREATE_RESOURCE_PARAMS::VARIANT_WITH_LAYOUT_AND_DESC2)
+    {
+        if (!m_Device16)
+            return E_NOINTERFACE;
+        hr = m_Device16->CreateCommittedResource4(
+            &committedAllocParams.m_HeapProperties,
+            committedAllocParams.m_HeapFlags & ~RESOURCE_CLASS_HEAP_FLAGS,
+            createParams.GetResourceDesc2(), createParams.GetInitialLayout(),
+            createParams.GetOptimizedClearValue(), committedAllocParams.m_ProtectedSession,
+            createParams.GetNumCastableFormats(), createParams.GetCastableFormats(),
+            D3D12MA_IID_PPV_ARGS(ppResource));
+    } else
+#endif
 #ifdef __ID3D12Device10_INTERFACE_DEFINED__
     if (createParams.Variant == CREATE_RESOURCE_PARAMS::VARIANT_WITH_LAYOUT)
     {
@@ -7391,7 +7781,7 @@ HRESULT AllocatorPimpl::AllocateCommittedResource(
                 createParams.GetResourceDesc1(), createParams.GetInitialLayout(),
                 createParams.GetOptimizedClearValue(), committedAllocParams.m_ProtectedSession,
                 createParams.GetNumCastableFormats(), const_cast<DXGI_FORMAT*>(createParams.GetCastableFormats()),
-                D3D12MA_IID_PPV_ARGS(&res));
+                D3D12MA_IID_PPV_ARGS(ppResource));
     } else
 #endif
 #ifdef __ID3D12Device8_INTERFACE_DEFINED__
@@ -7406,7 +7796,7 @@ HRESULT AllocatorPimpl::AllocateCommittedResource(
                 committedAllocParams.m_HeapFlags & ~RESOURCE_CLASS_HEAP_FLAGS,
                 createParams.GetResourceDesc1(), createParams.GetInitialResourceState(),
                 createParams.GetOptimizedClearValue(), committedAllocParams.m_ProtectedSession,
-                D3D12MA_IID_PPV_ARGS(&res));
+                D3D12MA_IID_PPV_ARGS(ppResource));
     } else
 #endif
     if (createParams.Variant == CREATE_RESOURCE_PARAMS::VARIANT_WITH_STATE)
@@ -7419,7 +7809,7 @@ HRESULT AllocatorPimpl::AllocateCommittedResource(
                     committedAllocParams.m_HeapFlags & ~RESOURCE_CLASS_HEAP_FLAGS,
                     createParams.GetResourceDesc(), createParams.GetInitialResourceState(),
                     createParams.GetOptimizedClearValue(), committedAllocParams.m_ProtectedSession,
-                    D3D12MA_IID_PPV_ARGS(&res));
+                    D3D12MA_IID_PPV_ARGS(ppResource));
         }
         else
 #endif
@@ -7430,7 +7820,7 @@ HRESULT AllocatorPimpl::AllocateCommittedResource(
                     &committedAllocParams.m_HeapProperties,
                     committedAllocParams.m_HeapFlags & ~RESOURCE_CLASS_HEAP_FLAGS,
                     createParams.GetResourceDesc(), createParams.GetInitialResourceState(),
-                    createParams.GetOptimizedClearValue(), D3D12MA_IID_PPV_ARGS(&res));
+                    createParams.GetOptimizedClearValue(), D3D12MA_IID_PPV_ARGS(ppResource));
             }
             else
                 hr = E_NOINTERFACE;
@@ -7440,36 +7830,6 @@ HRESULT AllocatorPimpl::AllocateCommittedResource(
     {
         D3D12MA_ASSERT(0);
         return E_INVALIDARG;
-    }
-
-    if (SUCCEEDED(hr))
-    {
-        SetResidencyPriority(res, committedAllocParams.m_ResidencyPriority);
-
-        if (ppvResource != NULL)
-        {
-            hr = res->QueryInterface(riidResource, ppvResource);
-        }
-        if (SUCCEEDED(hr))
-        {
-            Allocation* alloc = m_AllocationObjectAllocator.Allocate(
-                this, resourceSize, createParams.GetBaseResourceDesc()->Alignment);
-            alloc->InitCommitted(committedAllocParams.m_List);
-            alloc->SetResourcePointer(res, createParams.GetBaseResourceDesc());
-            alloc->SetPrivateData(pPrivateData);
-
-            *ppAllocation = alloc;
-
-            committedAllocParams.m_List->Register(alloc);
-
-            const UINT memSegmentGroup = HeapPropertiesToMemorySegmentGroup(committedAllocParams.m_HeapProperties);
-            m_Budget.AddBlock(memSegmentGroup, resourceSize);
-            m_Budget.AddAllocation(memSegmentGroup, resourceSize);
-        }
-        else
-        {
-            res->Release();
-        }
     }
     return hr;
 }
@@ -7484,7 +7844,7 @@ HRESULT AllocatorPimpl::AllocateHeap(
     *ppAllocation = nullptr;
 
     if (withinBudget &&
-        !NewAllocationWithinBudget(committedAllocParams.m_HeapProperties.Type, allocInfo.SizeInBytes))
+        !NewAllocationWithinBudget(committedAllocParams.m_HeapProperties, allocInfo.SizeInBytes))
     {
         return E_OUTOFMEMORY;
     }
@@ -7492,7 +7852,8 @@ HRESULT AllocatorPimpl::AllocateHeap(
     D3D12_HEAP_DESC heapDesc = {};
     heapDesc.SizeInBytes = allocInfo.SizeInBytes;
     heapDesc.Properties = committedAllocParams.m_HeapProperties;
-    heapDesc.Alignment = allocInfo.Alignment;
+    // Resource placement alignment may be smaller than the required heap alignment.
+    heapDesc.Alignment = HeapFlagsToAlignment(committedAllocParams.m_HeapFlags, false);
     heapDesc.Flags = committedAllocParams.m_HeapFlags;
 
     HRESULT hr;
@@ -7526,7 +7887,7 @@ HRESULT AllocatorPimpl::AllocateHeap(
 
 template<typename D3D12_RESOURCE_DESC_T>
 HRESULT AllocatorPimpl::CalcAllocationParams(const ALLOCATION_DESC& allocDesc, UINT64 allocSize,
-    const D3D12_RESOURCE_DESC_T* resDesc,
+    const D3D12_RESOURCE_DESC_T* resDesc, bool useTightAlignment,
     BlockVector*& outBlockVector, CommittedAllocationParameters& outCommittedAllocationParams, bool& outPreferCommitted)
 {
     outBlockVector = NULL;
@@ -7571,17 +7932,30 @@ HRESULT AllocatorPimpl::CalcAllocationParams(const ALLOCATION_DESC& allocDesc, U
         if (defaultPoolIndex != UINT32_MAX)
         {
             outBlockVector = m_BlockVectors[defaultPoolIndex];
-            const UINT64 preferredBlockSize = outBlockVector->GetPreferredBlockSize();
-            if (allocSize > preferredBlockSize)
-            {
-                outBlockVector = NULL;
-            }
-            else if (allocSize > preferredBlockSize / 2)
-            {
-                // Heuristics: Allocate committed memory if requested size if greater than half of preferred block size.
-                outPreferCommitted = true;
-            }
         }
+    }
+
+    if(outBlockVector != NULL && outCommittedAllocationParams.m_List != NULL)
+    {
+        const UINT64 preferredBlockSize = outBlockVector->GetPreferredBlockSize();
+        if (allocSize > preferredBlockSize)
+        {
+            outBlockVector = NULL;
+        }
+        else if (allocSize > preferredBlockSize / 2)
+        {
+            // Heuristics: Allocate committed memory if requested size if greater than half of preferred block size.
+            outPreferCommitted = true;
+        }
+    }
+
+    if (!outPreferCommitted &&
+        outBlockVector != NULL &&
+        outCommittedAllocationParams.m_List != NULL &&
+        PrefersCommittedAllocationOverBudget(outCommittedAllocationParams, allocSize))
+    {
+        // Prefer committed allocation over creating a new placed block that would exceed current budget.
+        outPreferCommitted = true;
     }
 
     if ((allocDesc.Flags & ALLOCATION_FLAG_COMMITTED) != 0 ||
@@ -7599,7 +7973,7 @@ HRESULT AllocatorPimpl::CalcAllocationParams(const ALLOCATION_DESC& allocDesc, U
     {
         if (resDesc->SampleDesc.Count > 1 && msaaAlwaysCommitted)
             outBlockVector = NULL;
-        if (!outPreferCommitted && PrefersCommittedAllocation(*resDesc, allocDesc.Flags & ALLOCATION_FLAG_STRATEGY_MASK))
+        if (!outPreferCommitted && PrefersCommittedAllocation(*resDesc, allocDesc.Flags & ALLOCATION_FLAG_STRATEGY_MASK, useTightAlignment))
             outPreferCommitted = true;
     }
 
@@ -7806,23 +8180,62 @@ HRESULT AllocatorPimpl::GetResourceAllocationInfoMiddle(
 
 #endif // #ifdef __ID3D12Device8_INTERFACE_DEFINED__
 
+#ifdef __ID3D12Device16_INTERFACE_DEFINED__
+D3D12_RESOURCE_ALLOCATION_INFO AllocatorPimpl::GetResourceAllocationInfo4Native(
+    const D3D12_RESOURCE_DESC2& resourceDesc,
+    UINT32 NumCastableFormats, const DXGI_FORMAT* pCastableFormats) const
+{
+    D3D12MA_ASSERT(m_Device16 != NULL);
+    D3D12_RESOURCE_ALLOCATION_INFO1 info1Unused;
+#if defined(_MSC_VER) || !defined(_WIN32)
+    return m_Device16->GetResourceAllocationInfo4(0, 1, &resourceDesc,
+        &NumCastableFormats, &pCastableFormats, &info1Unused);
+#else
+    D3D12_RESOURCE_ALLOCATION_INFO retVal;
+    return *m_Device16->GetResourceAllocationInfo4(&retVal, 0, 1, &resourceDesc,
+        &NumCastableFormats, &pCastableFormats, &info1Unused);
+#endif
+}
+
+HRESULT AllocatorPimpl::GetResourceAllocationInfoMiddle(
+    D3D12_RESOURCE_DESC2& inOutResourceDesc,
+    UINT32 NumCastableFormats, const DXGI_FORMAT* pCastableFormats,
+    D3D12_RESOURCE_ALLOCATION_INFO& outAllocInfo) const
+{
+    outAllocInfo = GetResourceAllocationInfo4Native(inOutResourceDesc, NumCastableFormats, pCastableFormats);
+    // The query may report the native minimum even when creation requires the caller's alignment floor.
+    if (outAllocInfo.SizeInBytes != UINT64_MAX && outAllocInfo.Alignment != 0 &&
+        (inOutResourceDesc.Flags & D3D12_RESOURCE_FLAG_USE_TIGHT_ALIGNMENT_COPY) != 0 &&
+        inOutResourceDesc.Alignment != 0 && IsPow2(inOutResourceDesc.Alignment))
+        outAllocInfo.Alignment = D3D12MA_MAX(outAllocInfo.Alignment, inOutResourceDesc.Alignment);
+    return outAllocInfo.SizeInBytes != UINT64_MAX ? S_OK : E_INVALIDARG;
+}
+#endif // #ifdef __ID3D12Device16_INTERFACE_DEFINED__
+
 template<typename D3D12_RESOURCE_DESC_T>
 HRESULT AllocatorPimpl::GetResourceAllocationInfo(
     D3D12_RESOURCE_DESC_T& inOutResourceDesc,
     UINT32 NumCastableFormats, const DXGI_FORMAT* pCastableFormats,
-    D3D12_RESOURCE_ALLOCATION_INFO& outAllocInfo) const
+    D3D12_RESOURCE_ALLOCATION_INFO& outAllocInfo,
+    bool useTightAlignment) const
 {
 #ifdef __ID3D12Device1_INTERFACE_DEFINED__
 
 #if D3D12MA_TIGHT_ALIGNMENT_SUPPORTED
-    if (IsTightAlignmentEnabled())
+    // Older tight-alignment runtimes require Alignment == 0 (see issue #101).
+    if (useTightAlignment && inOutResourceDesc.Alignment == 0)
     {
         // Don't allow USE_TIGHT_ALIGNMENT together with ALLOW_CROSS_ADAPTER as there is a D3D Debug Layer error:
         // D3D12 ERROR: ID3D12Device::GetResourceAllocationInfo: D3D12_RESOURCE_DESC::Flag D3D12_RESOURCE_FLAG_USE_TIGHT_ALIGNMENT will be ignored since D3D12_RESOURCE_FLAG_ALLOW_CROSS_ADAPTER is set. [ STATE_CREATION ERROR #599: CREATERESOURCE_INVALIDMISCFLAGS]
         // Also don't allow it together with D3D12_TEXTURE_LAYOUT_64KB_*_SWIZZLE, as there is this error (see issue #86):
         // D3D12 ERROR: ID3D12Device::GetResourceAllocationInfo: D3D12_RESOURCE_DESC::Flag D3D12_RESOURCE_FLAG_USE_TIGHT_ALIGNMENT is not valid when the layout is either D3D12_TEXTURE_LAYOUT_64KB_STANDARD_SWIZZLE or D3D12_TEXTURE_LAYOUT_64KB_UNDEFINED_SWIZZLE (...). [ STATE_CREATION ERROR #599: CREATERESOURCE_INVALIDMISCFLAGS]
         if((inOutResourceDesc.Flags & D3D12_RESOURCE_FLAG_ALLOW_CROSS_ADAPTER) == 0
-            && (inOutResourceDesc.Layout != D3D12_TEXTURE_LAYOUT_64KB_UNDEFINED_SWIZZLE && inOutResourceDesc.Layout != D3D12_TEXTURE_LAYOUT_64KB_STANDARD_SWIZZLE))
+            && (inOutResourceDesc.Layout != D3D12_TEXTURE_LAYOUT_64KB_UNDEFINED_SWIZZLE && inOutResourceDesc.Layout != D3D12_TEXTURE_LAYOUT_64KB_STANDARD_SWIZZLE)
+#ifdef __ID3D12Device16_INTERFACE_DEFINED__
+            // GUID layouts retain their native alignment; don't automatically add tight alignment.
+            && inOutResourceDesc.Layout != D3D12_TEXTURE_LAYOUT_GUID
+#endif
+            )
         {
             inOutResourceDesc.Flags |= D3D12_RESOURCE_FLAG_USE_TIGHT_ALIGNMENT;
         }
@@ -7839,7 +8252,7 @@ HRESULT AllocatorPimpl::GetResourceAllocationInfo(
     */
     if (inOutResourceDesc.Alignment == 0 &&
         inOutResourceDesc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER &&
-        !IsTightAlignmentEnabled())
+        !useTightAlignment)
     {
         outAllocInfo = {
             AlignUp<UINT64>(inOutResourceDesc.Width, D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT), // SizeInBytes
@@ -7852,16 +8265,33 @@ HRESULT AllocatorPimpl::GetResourceAllocationInfo(
     HRESULT hr = S_OK;
 
 #if D3D12MA_USE_SMALL_RESOURCE_PLACEMENT_ALIGNMENT
-    if (inOutResourceDesc.Alignment == 0 &&
-        (inOutResourceDesc.Flags & D3D12_RESOURCE_FLAG_USE_TIGHT_ALIGNMENT_COPY) == 0 &&
-        (inOutResourceDesc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE1D ||
-            inOutResourceDesc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
-            inOutResourceDesc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D) &&
-        (inOutResourceDesc.Flags & (D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL)) == 0
+    bool trySmallAlignment = false;
+
+    if (inOutResourceDesc.Alignment == 0
+        && (inOutResourceDesc.Flags & D3D12_RESOURCE_FLAG_USE_TIGHT_ALIGNMENT_COPY) == 0
+        && inOutResourceDesc.Layout == D3D12_TEXTURE_LAYOUT_UNKNOWN
+        && ResourceDimensionIsTexture(inOutResourceDesc.Dimension))
+    {
+        // MSAA texture.
+        if(inOutResourceDesc.SampleDesc.Count > 1)
+        {
+            trySmallAlignment = IsMsaa64KBAlignedTextureSupported()
+                && ResourceFlagsContainRenderTargetOrDepthStencil(inOutResourceDesc.Flags)
+                && inOutResourceDesc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        }
+        // Non-MSAA texture.
+        else
+        {
+            trySmallAlignment = !ResourceFlagsContainRenderTargetOrDepthStencil(inOutResourceDesc.Flags);
+        }
+    }
+
 #if D3D12MA_USE_SMALL_RESOURCE_PLACEMENT_ALIGNMENT == 1
-        && CanUseSmallAlignment(inOutResourceDesc)
+    if(trySmallAlignment)
+        trySmallAlignment = CanUseSmallAlignment(inOutResourceDesc);
 #endif
-        )
+    
+    if (trySmallAlignment)
     {
         /*
         The algorithm here is based on Microsoft sample: "Small Resources Sample"
@@ -7886,10 +8316,31 @@ HRESULT AllocatorPimpl::GetResourceAllocationInfo(
         inOutResourceDesc, NumCastableFormats, pCastableFormats, outAllocInfo);
 }
 
-bool AllocatorPimpl::NewAllocationWithinBudget(D3D12_HEAP_TYPE heapType, UINT64 size)
+bool AllocatorPimpl::IsTightAlignmentEnabled(const ALLOCATION_DESC& allocDesc) const
+{
+    if (!IsTightAlignmentEnabled())
+        return false;
+
+    if (allocDesc.CustomPool != NULL &&
+        (allocDesc.CustomPool->m_Pimpl->GetDesc().Flags & POOL_FLAG_DONT_USE_TIGHT_ALIGNMENT) != 0)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+bool AllocatorPimpl::PrefersCommittedAllocationOverBudget(
+    const CommittedAllocationParameters& committedAllocParams,
+    UINT64 allocSize)
+{
+    return !NewAllocationWithinBudget(committedAllocParams.m_HeapProperties, allocSize);
+}
+
+bool AllocatorPimpl::NewAllocationWithinBudget(const D3D12_HEAP_PROPERTIES& heapProps, UINT64 size)
 {
     Budget budget = {};
-    GetBudgetForHeapType(budget, heapType);
+    GetBudgetForHeapProperties(budget, heapProps);
     return budget.UsageBytes + size <= budget.BudgetBytes;
 }
 
@@ -8156,7 +8607,8 @@ BlockVector::BlockVector(
     UINT32 algorithm,
     bool denyMsaaTextures,
     ID3D12ProtectedResourceSession* pProtectedSession,
-    D3D12_RESIDENCY_PRIORITY residencyPriority)
+    D3D12_RESIDENCY_PRIORITY residencyPriority,
+    PoolPimpl* pool)
     : m_hAllocator(hAllocator),
     m_HeapProps(heapProps),
     m_HeapFlags(heapFlags),
@@ -8169,6 +8621,7 @@ BlockVector::BlockVector(
     m_DenyMsaaTextures(denyMsaaTextures),
     m_ProtectedSession(pProtectedSession),
     m_ResidencyPriority(residencyPriority),
+    m_Pool(pool),
     m_HasEmptyBlock(false),
     m_Blocks(hAllocator->GetAllocs()),
     m_NextBlockId(0) {}
@@ -8204,7 +8657,6 @@ HRESULT BlockVector::Allocate(
     UINT64 size,
     UINT64 alignment,
     const ALLOCATION_DESC& allocDesc,
-    bool committedAllowed,
     size_t allocationCount,
     Allocation** pAllocations)
 {
@@ -8219,7 +8671,6 @@ HRESULT BlockVector::Allocate(
                 size,
                 alignment,
                 allocDesc,
-                committedAllowed,
                 pAllocations + allocIndex);
             if (FAILED(hr))
             {
@@ -8249,7 +8700,7 @@ void BlockVector::Free(Allocation* hAllocation)
     if (IsHeapTypeStandard(m_HeapProps.Type))
     {
         Budget budget = {};
-        m_hAllocator->GetBudgetForHeapType(budget, m_HeapProps.Type);
+        m_hAllocator->GetBudgetForHeapProperties(budget, m_HeapProps);
         budgetExceeded = budget.UsageBytes >= budget.BudgetBytes;
     }
 
@@ -8308,12 +8759,11 @@ HRESULT BlockVector::CreateResource(
     UINT64 alignment,
     const ALLOCATION_DESC& allocDesc,
     const CREATE_RESOURCE_PARAMS& createParams,
-    bool committedAllowed,
     Allocation** ppAllocation,
     REFIID riidResource,
     void** ppvResource)
 {
-    HRESULT hr = Allocate(size, alignment, allocDesc, committedAllowed, 1, ppAllocation);
+    HRESULT hr = Allocate(size, alignment, allocDesc, 1, ppAllocation);
     if (FAILED(hr))
     {
         return hr;
@@ -8462,7 +8912,6 @@ HRESULT BlockVector::AllocatePage(
     UINT64 size,
     UINT64 alignment,
     const ALLOCATION_DESC& allocDesc,
-    bool committedAllowed,
     Allocation** pAllocation)
 {
     // Early reject: requested allocation size is larger that maximum block size for this block vector.
@@ -8471,27 +8920,18 @@ HRESULT BlockVector::AllocatePage(
         return E_OUTOFMEMORY;
     }
 
-    UINT64 freeMemory = UINT64_MAX;
-    if (IsHeapTypeStandard(m_HeapProps.Type))
+        UINT64 freeMemory = UINT64_MAX;
     {
         Budget budget = {};
-        m_hAllocator->GetBudgetForHeapType(budget, m_HeapProps.Type);
+        m_hAllocator->GetBudgetForHeapProperties(budget, m_HeapProps);
         freeMemory = (budget.UsageBytes < budget.BudgetBytes) ? (budget.BudgetBytes - budget.UsageBytes) : 0;
     }
 
-    const bool canExceedFreeMemory = !committedAllowed;
+    const bool canExceedFreeMemory = (allocDesc.Flags & ALLOCATION_FLAG_WITHIN_BUDGET) == 0;
 
-    bool canCreateNewBlock =
+    const bool canCreateNewBlock =
         ((allocDesc.Flags & ALLOCATION_FLAG_NEVER_ALLOCATE) == 0) &&
         (m_Blocks.size() < m_MaxBlockCount);
-
-    // Even if we don't have to stay within budget with this allocation, when the
-    // budget would be exceeded, we don't want to allocate new blocks, but always
-    // create resources as committed.
-    if (freeMemory < size && !canExceedFreeMemory)
-    {
-        canCreateNewBlock = false;
-    }
 
     // 1. Search existing allocations
     {
@@ -9328,7 +9768,7 @@ PoolPimpl::PoolPimpl(AllocatorPimpl* allocator, const POOL_DESC& desc)
         (desc.Flags & POOL_FLAG_ALGORITHM_MASK) != 0,
         (desc.Flags & POOL_FLAG_MSAA_TEXTURES_ALWAYS_COMMITTED) != 0,
         desc.pProtectedSession,
-        desc.ResidencyPriority);
+        desc.ResidencyPriority, this);
 }
 
 PoolPimpl::~PoolPimpl()
@@ -9872,6 +10312,29 @@ HRESULT Allocator::CreateResource3(
 }
 #endif // #ifdef __ID3D12Device10_INTERFACE_DEFINED__
 
+#ifdef __ID3D12Device16_INTERFACE_DEFINED__
+HRESULT Allocator::CreateResource4(
+    const ALLOCATION_DESC* pAllocDesc,
+    const D3D12_RESOURCE_DESC2* pResourceDesc,
+    D3D12_BARRIER_LAYOUT InitialLayout,
+    const D3D12_CLEAR_VALUE* pOptimizedClearValue,
+    UINT32 NumCastableFormats,
+    const DXGI_FORMAT* pCastableFormats,
+    Allocation** ppAllocation,
+    REFIID riidResource,
+    void** ppvResource)
+{
+    if (ppAllocation) *ppAllocation = NULL;
+    if (ppvResource) *ppvResource = NULL;
+    if (!pAllocDesc || !pResourceDesc || !ppAllocation || (NumCastableFormats != 0 && !pCastableFormats))
+        return E_INVALIDARG;
+    D3D12MA_DEBUG_GLOBAL_MUTEX_LOCK
+    return m_Pimpl->CreateResource(pAllocDesc,
+        CREATE_RESOURCE_PARAMS(pResourceDesc, InitialLayout, pOptimizedClearValue, NumCastableFormats, pCastableFormats),
+        ppAllocation, riidResource, ppvResource);
+}
+#endif // #ifdef __ID3D12Device16_INTERFACE_DEFINED__
+
 HRESULT Allocator::AllocateMemory(
     const ALLOCATION_DESC* pAllocDesc,
     const D3D12_RESOURCE_ALLOCATION_INFO* pAllocInfo,
@@ -9960,6 +10423,28 @@ HRESULT Allocator::CreateAliasingResource2(
         ppvResource);
 }
 #endif  // #ifdef __ID3D12Device10_INTERFACE_DEFINED__
+
+#ifdef __ID3D12Device16_INTERFACE_DEFINED__
+HRESULT Allocator::CreateAliasingResource3(
+    Allocation* pAllocation,
+    UINT64 AllocationLocalOffset,
+    const D3D12_RESOURCE_DESC2* pResourceDesc,
+    D3D12_BARRIER_LAYOUT InitialLayout,
+    const D3D12_CLEAR_VALUE* pOptimizedClearValue,
+    UINT32 NumCastableFormats,
+    const DXGI_FORMAT* pCastableFormats,
+    REFIID riidResource,
+    void** ppvResource)
+{
+    if (ppvResource) *ppvResource = NULL;
+    if (!pAllocation || !pResourceDesc || !ppvResource || (NumCastableFormats != 0 && !pCastableFormats))
+        return E_INVALIDARG;
+    D3D12MA_DEBUG_GLOBAL_MUTEX_LOCK
+    return m_Pimpl->CreateAliasingResource(pAllocation, AllocationLocalOffset,
+        CREATE_RESOURCE_PARAMS(pResourceDesc, InitialLayout, pOptimizedClearValue, NumCastableFormats, pCastableFormats),
+        riidResource, ppvResource);
+}
+#endif // #ifdef __ID3D12Device16_INTERFACE_DEFINED__
 
 HRESULT Allocator::CreatePool(
     const POOL_DESC* pPoolDesc,
@@ -10207,3 +10692,7 @@ VirtualBlock::~VirtualBlock()
 #endif // _D3D12MA_VIRTUAL_BLOCK_FUNCTIONS
 #endif // _D3D12MA_PUBLIC_INTERFACE
 } // namespace D3D12MA
+
+#if defined(__clang__) || defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif

@@ -38,9 +38,9 @@ namespace GLState
 
 	extern GLuint ps_ss; // sampler
 
-	extern GSTextureOGL* rt; // render target
-	extern GSTextureOGL* ds_as_rt; // Depth-Stencil as color
-	extern GSTextureOGL* ds; // Depth-Stencil
+	extern GSTextureOGL* current_rt; // render target
+	extern GSTextureOGL* current_ds_as_rt; // Depth-Stencil as color
+	extern GSTextureOGL* current_ds; // Depth-Stencil
 
 	extern u32 draw_buffers; // Number of color attachments to framebuffer.
 
@@ -49,7 +49,6 @@ namespace GLState
 	extern bool ds_written; // Depth Stencil written
 
 	extern GLuint tex_unit[8]; // shader input texture
-	extern GLuint64 tex_handle[8]; // shader input texture
 
 	extern u32 UpdateDrawBuffers();
 	extern void Clear();

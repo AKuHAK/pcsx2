@@ -50,6 +50,12 @@
 #define PS_AA1_TRIANGLE_SW_Z 3
 #endif
 
+#ifndef PS_ROV_DEPTH_NONE
+#define PS_ROV_DEPTH_NONE 0
+#define PS_ROV_DEPTH_READ_WRITE 1
+#define PS_ROV_DEPTH_READ_ONLY 2
+#endif
+
 #ifndef PS_FST
 #define PS_IIP 0
 #define PS_FST 0
@@ -111,6 +117,8 @@
 #define PS_TEX_IS_FB 0
 #define PS_AA1 0
 #define PS_ABE 0
+#define PS_ROV_COLOR 0
+#define PS_ROV_DEPTH 0
 #endif
 
 #ifndef VS_EXPAND_NONE
@@ -131,6 +139,12 @@
 #define NEEDS_DEPTH_FOR_AA1 (PS_AA1 == PS_AA1_TRIANGLE_SW_Z)
 #define SW_DEPTH (NEEDS_DEPTH_FOR_AFAIL || NEEDS_DEPTH_FOR_ZTST || NEEDS_DEPTH_FOR_AA1)
 #define ZWRITE (PS_ZFLOOR || PS_ZCLAMP || SW_DEPTH)
+
+#define PS_RETURN_COLOR_ROV (!PS_NO_COLOR && PS_ROV_COLOR)
+#define PS_RETURN_COLOR (!PS_NO_COLOR && !PS_ROV_COLOR)
+#define PS_RETURN_DEPTH_ROV (PS_ROV_DEPTH == PS_ROV_DEPTH_READ_WRITE)
+#define PS_RETURN_DEPTH (ZWRITE && !PS_ROV_DEPTH)
+#define PS_ROV_EARLYDEPTHSTENCIL (PS_ROV_COLOR && !PS_ROV_DEPTH && !ZWRITE)
 
 struct VS_INPUT
 {
@@ -181,21 +195,26 @@ struct PS_INPUT
 struct PS_OUTPUT
 {
 #define NUM_RTS 0
-#if !PS_NO_COLOR
-#if PS_DATE == 1 || PS_DATE == 2
-	float c : SV_Target;
-#else
-	float4 c0 : SV_Target0;
-	#undef NUM_RTS
-	#define NUM_RTS 1
-#if !PS_NO_COLOR1
-	float4 c1 : SV_Target1;
+
+#if PS_RETURN_COLOR
+	#if PS_DATE == 1 || PS_DATE == 2
+		float c0 : SV_Target;
+	#else
+		
+		float4 c0 : SV_Target0;
+
+		#undef NUM_RTS
+		#define NUM_RTS 1
+		
+		#if !PS_NO_COLOR1
+			float4 c1 : SV_Target1;
+		#endif
+	#endif
 #endif
-#endif
-#endif
-#if ZWRITE
+
+#if PS_RETURN_DEPTH
 	// In DX12 we do depth feedback loops with a color copy.
-	#if SW_DEPTH && PS_NO_COLOR1 && DX12
+	#if SW_DEPTH && PS_NO_COLOR1 && PS_DEPTH_FEEDBACK_SUPPORT == 2
 		#if NUM_RTS > 0
 			float depth_color : SV_Target1;
 		#else
@@ -208,15 +227,30 @@ struct PS_OUTPUT
 		float depth : SV_Depth;
 	#endif
 #endif
+
 #undef NUM_RTS
 };
 
 Texture2D<float4> Texture : register(t0);
 Texture2D<float4> Palette : register(t1);
+#if !PS_ROV_COLOR
 Texture2D<float4> RtTexture : register(t2);
+#endif
 Texture2D<float> PrimMinTexture : register(t3);
+#if !PS_ROV_DEPTH
 Texture2D<float> DepthTexture : register(t4);
+#endif
 SamplerState TextureSampler : register(s0);
+
+#if PS_ROV_COLOR
+RasterizerOrderedTexture2D<unorm float4> RtTextureRov : register(u0);
+static float4 rov_rt_value;
+#endif
+
+#if PS_ROV_DEPTH
+RasterizerOrderedTexture2D<float> DepthTextureRov : register(u1);
+static float rov_depth_value;
+#endif
 
 #ifdef DX12
 cbuffer cb1 : register(b1)
@@ -242,7 +276,45 @@ cbuffer cb1
 	float4x4 DitherMatrix;
 	float ScaledScaleFactor;
 	float RcpScaleFactor;
+	float _pad0_cb1;
+	float _pad1_cb1;
+	float LineCovScale;
+	float _pad2_cb1;
+	float _pad3_cb1;
+	float _pad4_cb1;
 };
+
+float4 RtLoad(int2 xy)
+{
+#if PS_ROV_COLOR
+	return rov_rt_value;
+#else
+	return RtTexture.Load(int3(int2(xy), 0));
+#endif
+}
+
+float DepthLoad(int2 xy)
+{
+#if PS_ROV_DEPTH
+	return rov_depth_value;
+#else
+	return DepthTexture.Load(int3(int2(xy), 0));
+#endif
+}
+
+void RtWrite(int2 xy, float4 c)
+{
+#if PS_ROV_COLOR
+	RtTextureRov[xy] = c;
+#endif
+}
+
+void DepthWrite(int2 xy, float d)
+{
+#if PS_ROV_DEPTH
+	DepthTextureRov[xy] = d;
+#endif
+}
 
 #if (PS_AUTOMATIC_LOD != 1) && (PS_MANUAL_LOD == 1)
 float manual_lod(float uv_w)
@@ -261,69 +333,92 @@ float manual_lod(float uv_w)
 #endif
 
 #if PS_ANISOTROPIC_FILTERING > 1
+bool2 nan_or_inf(float2 xy)
+{
+	// FXC (<=SM5.1) may optimise away isnan and isinf.
+	// DXC (>=SM6.0) will preserve them.
+#ifdef __hlsl_dx_compiler
+	return isinf(xy) | isnan(xy);
+#else
+	return (asuint(xy) & 0x7f800000) == 0x7f800000;
+#endif
+}
+
 float4 sample_c_af(float2 uv, float uv_w)
 {
 	// HW sampler will reject bad UVs, match that here.
-	uv = any(isnan(uv) | isinf(uv)) ? float2(0, 0) : uv;
+	uv = any(nan_or_inf(uv)) ? float2(0.0f, 0.0f) : uv;
 
 	// Large floating point values risk NaN/Inf values.
 	// Above this value floats lose decimal precision, so seems a resonable limit for UVs.
 	uv = clamp(uv, -8388608.0f, 8388608.0f);
 
 	// Below taken from https://microsoft.github.io/DirectX-Specs/d3d/archive/D3D11_3_FunctionalSpec.htm#7.18.11%20LOD%20Calculations
+	// And https://registry.khronos.org/OpenGL/extensions/EXT/EXT_texture_filter_anisotropic.txt
 	// With guidance from https://pema.dev/2025/05/09/mipmaps-too-much-detail/ 
 	float2 sz;
 	Texture.GetDimensions(sz.x, sz.y);
 	float2 dX = ddx(uv) * sz;
 	float2 dY = ddy(uv) * sz;
 
+	float length_x = length(dX);
+	float length_y = length(dY);
+
 	// Calculate Ellipse Transform
-	bool d_zero = length(dX) == 0 || length(dY) == 0;
-	bool d_par = (dX.x * dY.y - dY.x * dX.y) == 0;
-	bool d_per = dot(dX, dY) == 0;
-	bool d_inf_nan = any(isinf(dX) | isinf(dY) | isnan(dX) | isnan(dY));
+	bool d_zero = length_x < 0.001f || length_y < 0.001f;
+	float f = (dX.x * dY.y - dX.y * dY.x);
+	bool d_par = f < 0.001f;
+	bool d_per = dot(dX, dY) < 0.001f;
+	bool d_inf_nan = any(nan_or_inf(dX) | nan_or_inf(dY));
 
 	if (!(d_zero || d_par || d_per || d_inf_nan))
 	{
 		float A = dX.y * dX.y + dY.y * dY.y;
 		float B = -2 * (dX.x * dX.y + dY.x * dY.y);
 		float C = dX.x * dX.x + dY.x * dY.x;
-		float f = (dX.x * dY.y - dY.x * dX.y);
 		float F = f * f;
 
 		float p = A - C;
 		float q = A + C;
 		float t = sqrt(p * p + B * B);
 
+		float sqrt_num_plus  = sqrt(F * (t + p));
+		float sqrt_num_minus = sqrt(F * (t - p));
+
+		float inv_sqrt_denom_plus  = rsqrt(t * (q + t));
+		float inv_sqrt_denom_minus = rsqrt(t * (q - t));
+
+		float signB = sign(B);
+
 		float2 new_dX = float2(
-			sqrt(F * (t + p) / (t * (q + t))),
-			sqrt(F * (t - p) / (t * (q + t))) * sign(B)
+			sqrt_num_plus  * inv_sqrt_denom_plus,
+			sqrt_num_minus * inv_sqrt_denom_plus * signB
 		);
-		
+
 		float2 new_dY = float2(
-			sqrt(F * (t - p) / (t * (q - t))) * -sign(B),
-			sqrt(F * (t + p) / (t * (q - t)))
+			sqrt_num_minus * inv_sqrt_denom_minus * -signB,
+			sqrt_num_plus  * inv_sqrt_denom_minus
 		);
-		
-		d_inf_nan = any(isinf(new_dX) | isinf(new_dY) | isnan(new_dX) | isnan(new_dY));
+
+		d_inf_nan = any(nan_or_inf(new_dX) | nan_or_inf(new_dY));
 		if (!d_inf_nan)
 		{
 			dX = new_dX;
 			dY = new_dY;
+			length_x = length(dX);
+			length_y = length(dY);
 		}
 	}
 
 	// Compute AF values
-	float squared_length_x = dX.x * dX.x + dX.y * dX.y;
-	float squared_length_y = dY.x * dY.x + dY.y * dY.y;
-	float determinant = abs(dX.x * dY.y - dX.y * dY.x);
-	bool is_major_x = squared_length_x > squared_length_y;
-	float squared_length_major = is_major_x ? squared_length_x : squared_length_y;
-	float length_major = sqrt(squared_length_major);
+	bool is_major_x = length_x > length_y;
+	float length_major = is_major_x ? length_x : length_y;
+	float length_minor = is_major_x ? length_y : length_x;
 
 	float aniso_ratio;
 	float length_lod;
 	float2 aniso_line;
+
 	if (length_major <= 1.0f)
 	{
 		// A zero length_major would result in NaN Lod and break sampling.
@@ -331,57 +426,44 @@ float4 sample_c_af(float2 uv, float uv_w)
 		// Perform isotropic filtering instead.
 		aniso_ratio = 1.0f;
 		length_lod = length_major;
-		aniso_line = float2(0, 0);
+		aniso_line = float2(0.0f, 0.0f);
 	}
 	else
 	{
-		float norm_major = 1.0f / length_major;
-	
-		float2 aniso_line_dir = float2(
-			(is_major_x ? dX.x : dY.x) * norm_major,
-			(is_major_x ? dX.y : dY.y) * norm_major
-		);
-	
-		aniso_ratio = squared_length_major / determinant;
+		float2 aniso_line_dir = is_major_x ? dX : dY;
 
-		// Calculate the minor length of the ellipse for Lod, while also clamping the ratio of anisotropy.
-		if (aniso_ratio > PS_ANISOTROPIC_FILTERING)
-		{
-			// ratio is clamped - Lod is based on ratio (preserves area)
-			aniso_ratio = PS_ANISOTROPIC_FILTERING;
-			length_lod = length_major / PS_ANISOTROPIC_FILTERING;
-		}
-		else
-		{
-			// ratio not clamped - Lod is based on area
-			length_lod = determinant / length_major;
-		}
+		aniso_ratio = min(length_major / length_minor, PS_ANISOTROPIC_FILTERING);
+		length_lod = length_major / aniso_ratio;
 
 		// clamp to top Lod
 		if (length_lod < 1.0f)
 			aniso_ratio = max(1.0f, aniso_ratio * length_lod);
 
 		aniso_ratio = round(aniso_ratio);
-		aniso_line = aniso_line_dir * 0.5f * length_major * (1.0f / sz);
+
+		aniso_line = aniso_line_dir * 0.5f * (1.0f / sz);
 	}
-	
+
 #if PS_AUTOMATIC_LOD == 1
 	float lod = log2(length_lod);
 #elif PS_MANUAL_LOD == 1
 	float lod = manual_lod(uv_w);
 #else
-	float lod = 0; // No Lod
+	float lod = 0.0f; // No Lod
 #endif
-	
+
 	float4 colour;
 	if (aniso_ratio == 1.0f)
 		colour = Texture.SampleLevel(TextureSampler, uv, lod);
 	else
 	{
-		float4 num = float4(0, 0, 0, 0);
-		for (int i = 0; i < aniso_ratio; i++)
-		{		
-			float2 d = -aniso_line + (0.5f + i) * (2.0f * aniso_line) / aniso_ratio;	
+		float4 num = float4(0.0f, 0.0f, 0.0f, 0.0f);
+		float2 segment = (2.0f * aniso_line) / aniso_ratio;
+
+		int aniso_ratio_i = (int)aniso_ratio;
+		for (int i = 0; i < aniso_ratio_i; i++)
+		{
+			float2 d = -aniso_line + (0.5f + i) * segment;	
 			float2 uv_sample = uv + d;
 			float4 sample_colour = Texture.SampleLevel(TextureSampler, uv_sample, lod);
 			num += sample_colour;
@@ -396,7 +478,7 @@ float4 sample_c_af(float2 uv, float uv_w)
 float4 sample_c(float2 uv, float uv_w, int2 xy)
 {
 #if PS_TEX_IS_FB == 1
-	return RtTexture.Load(int3(int2(xy), 0));
+	return RtLoad(xy);
 #elif PS_REGION_RECT == 1
 	return Texture.Load(int3(int2(uv), 0));
 #else
@@ -591,7 +673,7 @@ float4x4 sample_4p(uint4 u)
 uint fetch_raw_depth(int2 xy)
 {
 #if PS_TEX_IS_FB == 1
-	float4 col = RtTexture.Load(int3(xy, 0));
+	float4 col = RtLoad(xy);
 #else
 	float4 col = Texture.Load(int3(xy, 0));
 #endif
@@ -601,7 +683,7 @@ uint fetch_raw_depth(int2 xy)
 float4 fetch_raw_color(int2 xy)
 {
 #if PS_TEX_IS_FB == 1
-	return RtTexture.Load(int3(xy, 0));
+	return RtLoad(xy);
 #else
 	return Texture.Load(int3(xy, 0));
 #endif
@@ -610,7 +692,7 @@ float4 fetch_raw_color(int2 xy)
 float4 fetch_c(int2 uv)
 {
 #if PS_TEX_IS_FB == 1
-	return RtTexture.Load(int3(uv, 0));
+	return RtLoad(uv);
 #else
 	return Texture.Load(int3(uv, 0));
 #endif
@@ -696,7 +778,7 @@ float4 sample_depth(float2 st, float2 pos)
 	}
 	else if (PS_DEPTH_FMT == 1)
 	{
-		// Based on ps_convert_float32_rgba8 of convert
+		// Based on ps_convert_depth32_rgba8 of convert
 
 		// Convert a FLOAT32 depth texture into a RGBA color texture
 		uint d = uint(fetch_c(uv).r * exp2(32.0f));
@@ -704,7 +786,7 @@ float4 sample_depth(float2 st, float2 pos)
 	}
 	else if (PS_DEPTH_FMT == 2)
 	{
-		// Based on ps_convert_float16_rgb5a1 of convert
+		// Based on ps_convert_depth16_rgb5a1 of convert
 
 		// Convert a FLOAT32 (only 16 lsb) depth into a RGB5A1 color texture
 		uint d = uint(fetch_c(uv).r * exp2(32.0f));
@@ -1015,8 +1097,11 @@ void ps_fbmask(inout float4 C, float2 pos_xy)
 {
 	if (PS_FBMASK)
 	{
-		float multi = PS_COLCLIP_HW ? 65535.0f : 255.0f;
-		float4 RT = trunc(RtTexture.Load(int3(pos_xy, 0)) * multi + 0.1f);
+		float multi_rgb = PS_COLCLIP_HW ? 65535.0f : 255.0f;
+		float multi_a = PS_RTA_CORRECTION ? 128.0f : 255.0f;
+		float4 RT = RtLoad(int2(pos_xy));
+		RT.rgb = trunc(RT.rgb * multi_rgb + 0.1f);
+		RT.a = round(RT.a * multi_a);
 		C = (float4)(((uint4)C & ~FbMask) | ((uint4)RT & FbMask));
 	}
 }
@@ -1092,7 +1177,15 @@ void ps_blend(inout float4 Color, inout float4 As_rgba, float2 pos_xy)
 			As_rgba.rgb = (float3)1.0f;
 		}
 
-		float4 RT = SW_BLEND_NEEDS_RT ? RtTexture.Load(int3(pos_xy, 0)) : (float4)0.0f;
+		float4 RT = (float4)0.0f;
+		if (SW_BLEND_NEEDS_RT)
+		{
+			RT = RtLoad(int2(pos_xy));
+			float color_multi = PS_COLCLIP_HW ? 65535.0f : 255.0f;
+			float alpha_multi = PS_RTA_CORRECTION ? 128.0f : 255.0f;
+			RT.rgb = trunc(RT.rgb * color_multi + 0.1f);
+			RT.a = trunc(RT.a * alpha_multi + 0.1f);
+		}
 
 		if (PS_SHUFFLE && SW_BLEND_NEEDS_RT)
 		{
@@ -1113,9 +1206,8 @@ void ps_blend(inout float4 Color, inout float4 As_rgba, float2 pos_xy)
 			}
 		}
 		
-		float Ad = PS_RTA_CORRECTION ? trunc(RT.a * 128.0f + 0.1f) / 128.0f : trunc(RT.a * 255.0f + 0.1f) / 128.0f;
-		float color_multi = PS_COLCLIP_HW ? 65535.0f : 255.0f;
-		float3 Cd = trunc(RT.rgb * color_multi + 0.1f);
+		float Ad = RT.a / 128.0f;
+		float3 Cd = RT.rgb;
 		float3 Cs = Color.rgb;
 
 		float3 A = (PS_BLEND_A == 0) ? Cs : ((PS_BLEND_A == 1) ? Cd : (float3)0.0f);
@@ -1225,24 +1317,63 @@ void ps_blend(inout float4 Color, inout float4 As_rgba, float2 pos_xy)
 	}
 }
 
+#if PS_ROV_EARLYDEPTHSTENCIL
+[earlydepthstencil]
+#endif
+
+#if PS_ROV_COLOR || PS_ROV_DEPTH
+	#define DISCARD { rov_discard_color = true; rov_discard_depth = true; }
+	#define DISCARD_COLOR rov_discard_color = true
+	#define DISCARD_DEPTH rov_discard_depth = true
+#else
+	#define DISCARD discard
+	#define DISCARD_COLOR o_col0 = RtLoad(input.p.xy)
+	#define DISCARD_DEPTH input.p.z = DepthLoad(input.p.xy)
+#endif
+
+#if (PS_RETURN_COLOR || PS_RETURN_DEPTH)
 PS_OUTPUT ps_main(PS_INPUT input)
+#else
+void ps_main(PS_INPUT input)
+#endif
 {
 	// Must floor before depth testing.
 #if PS_ZFLOOR
 	input.p.z = floor(input.p.z * exp2(32.0f)) * exp2(-32.0f);
 #endif
 
-#if PS_ZTST == ZTST_GEQUAL
-	if (input.p.z < DepthTexture.Load(int3(input.p.xy, 0)).r)
-		discard;
-#elif PS_ZTST == ZTST_GREATER
-	if (input.p.z <= DepthTexture.Load(int3(input.p.xy, 0)).r)
-		discard;
+#if PS_ROV_COLOR
+	rov_rt_value = RtTextureRov[input.p.xy];
 #endif
+
+#if PS_ROV_DEPTH
+	rov_depth_value = DepthTextureRov[input.p.xy];
+#endif
+
+#if PS_ROV_COLOR || PS_ROV_DEPTH
+	bool rov_discard_color = false;
+	bool rov_discard_depth = false;
+#endif
+
+	// Use ROV discard macro for since we cannot do
+	// conditional discard based on value read from ROV.
+#if PS_ZTST == ZTST_GEQUAL
+	if (input.p.z < DepthLoad(input.p.xy))
+		DISCARD;
+#elif PS_ZTST == ZTST_GREATER
+	if (input.p.z <= DepthLoad(input.p.xy))
+		DISCARD;
+#endif
+
 	float4 C = ps_color(input);
 
 #if PS_AA1
-	float cov = clamp(1.0f - abs(input.inv_cov), 0.0f, 1.0f);
+	#if PS_AA1 == PS_AA1_LINE
+		// Blur only outer part of the line by scaling coverage.
+		float cov = clamp(LineCovScale * (1.0f - abs(input.inv_cov)), 0.0f, 1.0f);
+	#else
+		float cov = clamp(1.0f - abs(input.inv_cov), 0.0f, 1.0f);
+	#endif
 	#if PS_ABE
 		if (floor(C.a) == 128.0f) // The coverage is only used if the fragment alpha is 128.
 			C.a = 128.0f * cov;
@@ -1256,12 +1387,10 @@ PS_OUTPUT ps_main(PS_INPUT input)
 
 	bool atst_pass = atst(C);
 
-#if PS_AFAIL == AFAIL_KEEP
+#if PS_ATST != PS_ATST_NONE && PS_AFAIL == AFAIL_KEEP
 	if (!atst_pass)
 		discard;
 #endif
-
-	PS_OUTPUT output;
 
 	if (PS_SCANMSK & 2)
 	{
@@ -1273,7 +1402,7 @@ PS_OUTPUT ps_main(PS_INPUT input)
 	float4 alpha_blend = (float4)0.0f;
 	if (SW_AD_TO_HW)
 	{
-		float4 RT = PS_RTA_CORRECTION ? trunc(RtTexture.Load(int3(input.p.xy, 0)) * 128.0f + 0.1f) : trunc(RtTexture.Load(int3(input.p.xy, 0)) * 255.0f + 0.1f);
+		float4 RT = PS_RTA_CORRECTION ? trunc(RtLoad(input.p.xy) * 128.0f + 0.1f) : trunc(RtLoad(input.p.xy) * 255.0f + 0.1f);
 		alpha_blend = (float4)(RT.a / 128.0f);
 	}
 	else
@@ -1297,9 +1426,9 @@ PS_OUTPUT ps_main(PS_INPUT input)
 
 #if PS_WRITE_RG == 1
 	// Pseudo 16 bits access.
-	float rt_a = RtTexture.Load(int3(input.p.xy, 0)).g;
+	float rt_a = RtLoad(input.p.xy).g;
 #else
-	float rt_a = RtTexture.Load(int3(input.p.xy, 0)).a;
+	float rt_a = RtLoad(input.p.xy).a;
 #endif
 
 #if (PS_DATE & 3) == 1
@@ -1318,9 +1447,8 @@ PS_OUTPUT ps_main(PS_INPUT input)
 	#endif
 #endif
 
-	if (bad)
-		discard;
-
+if (bad)
+	discard;
 #endif
 
 #if PS_DATE == 3
@@ -1331,17 +1459,29 @@ PS_OUTPUT ps_main(PS_INPUT input)
 		discard;
 #endif
 
+	// Output values
+#if !PS_NO_COLOR
+	#if PS_DATE == 1 || PS_DATE == 2
+		float o_col0;
+	#else
+		float4 o_col0;
+		#if !PS_NO_COLOR1
+			float4 o_col1;
+		#endif
+	#endif
+#endif
+
 	// Get first primitive that will write a failling alpha value
 #if PS_DATE == 1
 	// DATM == 0
 	// Pixel with alpha equal to 1 will failed (128-255)
-	output.c = (C.a > 127.5f) ? float(input.primid) : float(0x7FFFFFFF);
+	o_col0 = (C.a > 127.5f) ? float(input.primid) : float(0x7FFFFFFF);
 
 #elif PS_DATE == 2
 
 	// DATM == 1
 	// Pixel with alpha equal to 0 will failed (0-127)
-	output.c = (C.a < 127.5f) ? float(input.primid) : float(0x7FFFFFFF);
+	o_col0 = (C.a < 127.5f) ? float(input.primid) : float(0x7FFFFFFF);
 
 #else
 	// Not primid DATE setup
@@ -1416,31 +1556,31 @@ PS_OUTPUT ps_main(PS_INPUT input)
 	alpha_blend.a = float(atst_pass);
 #endif
 
+	// Output color scaling
 #if !PS_NO_COLOR
-	output.c0.a = PS_RTA_CORRECTION ? C.a / 128.0f : C.a / 255.0f;
-	output.c0.rgb = PS_COLCLIP_HW ? float3(C.rgb / 65535.0f) : C.rgb / 255.0f;
+	o_col0.a = PS_RTA_CORRECTION ? C.a / 128.0f : C.a / 255.0f;
+	o_col0.rgb = PS_COLCLIP_HW ? float3(C.rgb / 65535.0f) : C.rgb / 255.0f;
 #if !PS_NO_COLOR1
-	output.c1 = alpha_blend;
+	o_col1 = alpha_blend;
 #endif
+#endif // !PS_NO_COLOR
 
 	// Alpha test with feedback
 #if PS_AFAIL == AFAIL_FB_ONLY
 	if (!atst_pass)
-		input.p.z = DepthTexture.Load(int3(input.p.xy, 0)).r;
+		DISCARD_DEPTH;
 #elif PS_AFAIL == AFAIL_ZB_ONLY
 	if (!atst_pass)
-		output.c0 = RtTexture.Load(int3(input.p.xy, 0));
+		DISCARD_COLOR;
 #elif PS_AFAIL == AFAIL_RGB_ONLY || PS_AFAIL == AFAIL_RGB_ONLY_SW_Z
 	if (!atst_pass)
 	{
-	output.c0.a = RtTexture.Load(int3(input.p.xy, 0)).a;
+		o_col0.a = RtLoad(input.p.xy).a; // discard alpha
 	#if PS_AFAIL == AFAIL_RGB_ONLY_SW_Z
-		input.p.z = DepthTexture.Load(int3(input.p.xy, 0)).r; 
+		DISCARD_DEPTH;
 	#endif
 	}
 #endif
-
-#endif // !PS_NO_COLOR
 
 #endif // PS_DATE != 1/2
 
@@ -1450,18 +1590,39 @@ PS_OUTPUT ps_main(PS_INPUT input)
 
 #if PS_AA1 == PS_AA1_TRIANGLE_SW_Z
 	if (!bool(input.interior))
-		input.p.z = DepthTexture.Load(int3(input.p.xy, 0)).r; // No depth update for triangle edges.
+		DISCARD_DEPTH; // No depth update for triangle edges.
 #endif
 
-#if ZWRITE
-#if SW_DEPTH && PS_NO_COLOR1 && DX12
-	// Output color clone for feedback as well as real depth.
-	output.depth_color = input.p.z;
+#if (PS_RETURN_COLOR || PS_RETURN_DEPTH)
+	PS_OUTPUT output;
 #endif
+
+	// Color write back
+#if PS_RETURN_COLOR
+	output.c0 = o_col0;
+	#if !PS_NO_COLOR1
+		output.c1 = o_col1;
+	#endif
+#elif PS_RETURN_COLOR_ROV
+	if (!rov_discard_color)
+		RtWrite(input.p.xy, o_col0);
+#endif
+
+	// Depth write back
+#if PS_RETURN_DEPTH
 	output.depth = input.p.z;
+	#if SW_DEPTH && PS_NO_COLOR1 && PS_DEPTH_FEEDBACK_SUPPORT == 2
+		// Output color clone for feedback.
+		output.depth_color = input.p.z;
+	#endif
+#elif PS_RETURN_DEPTH_ROV
+	if (!rov_discard_depth)
+		DepthWrite(input.p.xy, input.p.z);
 #endif
 
+#if (PS_RETURN_COLOR || PS_RETURN_DEPTH)
 	return output;
+#endif
 }
 
 #endif // PIXEL_SHADER
@@ -1484,7 +1645,7 @@ cbuffer cb0
 	float2 TextureOffset;
 	float2 PointSize;
 	uint MaxDepth;
-	uint _cb0_pad0;
+	float LineAA1Width;
 };
 
 #ifdef DX12
@@ -1575,7 +1736,11 @@ uint load_index(uint _i)
 {
 	uint i = _i + BaseIndex;
 	// i is even => load lower 16 bits; i odd => load upper 16 bits.
-	uint shift = (i & 1u) << 4u;
+	// Intel Haswell seems to be having issues on dx11/12 with running the bfi instruction below in this specific case,
+	// so let's use an alternative that gives the same result, note this is only broken on Haswell, Ivy Bridge and Skylake are fine,
+	// the issue appears when running the D3D compiler with optimizations, running with D3DCOMPILE_SKIP_OPTIMIZATION is fine with bfi.
+	// uint shift = (i & 1u) << 4u;
+	uint shift = (i & 1u) != 0u ? 16u : 0u;
 	return (IndexBuffer.Load(i >> 1u) >> shift) & 0xFFFFu;
 }
 
@@ -1592,6 +1757,110 @@ VS_INPUT load_vertex(uint index)
 	vert.uv = uint2(raw.UV & 0xFFFFu, raw.UV >> 16);
 	vert.f = float4(float(raw.FOG & 0xFFu), float((raw.FOG >> 8) & 0xFFu), float((raw.FOG >> 16) & 0xFFu), float(raw.FOG >> 24)) / 255.0f;
 	return vert;
+}
+
+// Convert XY from NDC to GS pixel coordinates (i.e. 1.0 = 1 GS pixel).
+float2 get_xy_unscaled(float2 xy)
+{
+	return round(xy / VertexScale) / 16.0f;
+}
+
+// Get the XY deltas in GS pixel coordinates, using first vertex as the origin.
+float2x2 get_xy_deltas_unscaled(VS_OUTPUT v0, VS_OUTPUT v1, VS_OUTPUT v2)
+{
+	float2 xy0 = get_xy_unscaled(v0.p.xy);
+	float2 xy1 = get_xy_unscaled(v1.p.xy);
+	float2 xy2 = get_xy_unscaled(v2.p.xy);
+	return float2x2(xy1 - xy0, xy2 - xy0);
+}
+
+// Get the AA1 outward expand direction to the edge formed by the first two vertices.
+// This is up or down for shallow (X dominant) edges, and right or left for steep (Y dominant) edges.
+// Similar expansion to line AA1 except instead of expanding on both sides of the line,
+// expand on on the side towards the outside of the triangle.
+float2 get_aa1_triangle_expand_dir(VS_OUTPUT v0, VS_OUTPUT v1, VS_OUTPUT v2)
+{
+	float2x2 xy_deltas = get_xy_deltas_unscaled(v0, v1, v2);
+	float2 line_delta = xy_deltas[0];
+	float2 line_opposite = xy_deltas[1];
+
+	float2 line_normal = float2(line_delta.y, -line_delta.x);
+	float2 line_expand = abs(line_delta.x) >= abs(line_delta.y) ? float2(0.0f, 1.0f) : float2(1.0f, 0.0f);
+
+	if ((dot(line_expand, line_normal) >= 0.0f) == (dot(line_opposite, line_normal) >= 0.0f))
+	{
+		// Expand direction point towards the interior so flip it.
+		line_expand = -line_expand;
+	}
+
+	return line_expand;
+}
+
+float2x2 get_inverse(float2x2 mat, float det)
+{
+	return float2x2(mat[1][1], -mat[0][1], -mat[1][0], mat[0][0]) * (1 / det);
+}
+
+// Extrapolate triangle attributes from the first vertex along the given direction.
+// dp_mat is derived from the input vertices, it is passed in to avoid recomputing.
+void extrapolate_aa1_triangle_edge(inout VS_OUTPUT v0, VS_OUTPUT v1, VS_OUTPUT v2, float2x2 dp_mat, float2 dp)
+{
+	// Get texture deltas
+	#if VS_TME
+		#if VS_FST
+			float2x2 dt = float2x2(v1.ti.zw - v0.ti.zw, v2.ti.zw - v0.ti.zw);
+		#else
+			float2x2 dt = float2x2(v1.t.xy - v0.t.xy, v2.t.xy - v0.t.xy);
+		#endif
+	#endif
+
+	// Get color delta if interpolating
+	#if VS_IIP
+		float2x4 dc = float2x4(v1.c - v0.c, v2.c - v0.c);
+	#endif
+
+	float2 dz = float2(v1.p.z - v0.p.z, v2.p.z - v0.p.z); // Z deltas
+
+	float2 df = float2(v1.t.z - v0.t.z, v2.t.z - v0.t.z); // Fog deltas
+
+	float2 dq = float2(v1.t.w - v0.t.w, v2.t.w - v0.t.w); // Q deltas
+
+	// To prevent unstable extrapolation, do not extrapolate if the
+	// minimum perpendicular length of the triangle is < 2 pixels.
+	float dp_det = determinant(dp_mat); // Twice signed triangle area.
+	float len0 = length(dp_mat[0]);
+	float len1 = length(dp_mat[1]);
+	float len2 = length(dp_mat[1] - dp_mat[0]);
+	float min_perp_length = abs(dp_det) / max(max(len0, len1), len2);
+
+	// Get the position -> barycentric weight matrix
+	float2x2 inv_dp_mat = get_inverse(dp_mat, dp_det);
+
+	float2 weights = min_perp_length < 2 ? 0 : mul(dp, inv_dp_mat);
+
+	v0.p.xy += dp * PointSize; // Extrapolate position
+
+	// Extrapolate texture coords
+	#if VS_TME
+		#if VS_FST
+			v0.ti.zw += mul(weights, dt);
+			v0.ti.xy = v0.ti.zw * TextureScale;
+		#else
+			v0.t.xy += mul(weights, dt);
+			v0.ti.zw = v0.t.xy / TextureScale;
+			v0.t.w += dot(weights, dq);
+		#endif
+	#endif
+
+	// Extrapolate and clamp color
+	#if VS_IIP
+		v0.c += mul(weights, dc);
+		v0.c = clamp(v0.c, 0, 255);
+	#endif
+
+	v0.p.z += dot(weights, dz); // Extrapolate depth
+
+	v0.t.z += dot(weights, df); // Extrapolate fog
 }
 
 VS_OUTPUT vs_main_expand(uint vid : SV_VertexID)
@@ -1614,21 +1883,18 @@ VS_OUTPUT vs_main_expand(uint vid : SV_VertexID)
 	// EXPAND_LINE_AA1 also adds coverage to the output.
 
 	uint vid_base = vid >> 2;
-	bool is_bottom = vid & 2;
-	bool is_right = vid & 1;
-	uint vid_other = is_bottom ? vid_base - 1 : vid_base + 1;
+	bool is_bottom = (vid & 2u) != 0u;
+	bool is_right = (vid & 1u) != 0u;
+	uint vid_other = is_bottom ? vid_base - 1u : vid_base + 1u;
 	VS_OUTPUT vtx = vs_main(load_vertex(vid_base));
 	VS_OUTPUT other = vs_main(load_vertex(vid_other));
 
 	// Use bottom minus top for delta regardless of which vertex we are expanding.
 	float2 line_delta = is_bottom ? (vtx.p.xy - other.p.xy) : (other.p.xy - vtx.p.xy);
-	float2 line_vector = normalize(line_delta);
-#if VS_EXPAND == VS_EXPAND_LINE
+	float2 line_vector = normalize(line_delta / VertexScale);
 	float2 line_expand = float2(line_vector.y, -line_vector.x);
-#elif VS_EXPAND == VS_EXPAND_LINE_AA1
-	// Expand in y direction for shallow lines and x direction for steep lines.
-	line_delta /= VertexScale;
-	float2 line_expand = abs(line_delta.x) >= abs(line_delta.y) ? float2(0.0f, 2.0f) : float2(2.0f, 0.0f);
+#if VS_EXPAND == VS_EXPAND_LINE_AA1
+	line_expand *= 2.0f * LineAA1Width;
 #endif
 	float2 line_width = (line_expand * PointSize) / 2;
 	float2 offset = is_right ? line_width : -line_width;
@@ -1674,61 +1940,93 @@ VS_OUTPUT vs_main_expand(uint vid : SV_VertexID)
 	// - Vertices 3-8: First edge expanded (2 triangles).
 	// - Vertices 9-14: Second edge expanded (2 triangles).
 	// - Vertices 15-20: Third edge expanded (2 triangles).
+	// - Vertices 21-26: First corner cap (2 triangles).
+	// - Vertices 27-32: Second corner cap (2 triangles).
+	// - Vertices 33-38: Third corner cap (2 triangles).
 
-	uint prim_id = vid / 21;
-	uint prim_offset = vid - 21 * prim_id; // range: 0-20
-	bool interior = prim_offset < 3;
+	uint prim_id = vid / 39u;
+	uint prim_offset = vid - 39u * prim_id; // range: 0-38
+	bool interior = prim_offset < 3u;
+	bool edge = 3u <= prim_offset && prim_offset < 21u;
 
 	VS_OUTPUT vtx;
 	if (interior)
 	{
-		vtx = vs_main(load_vertex(load_index(3 * prim_id + prim_offset)));
+		vtx = vs_main(load_vertex(load_index(3u * prim_id + prim_offset)));
 		vtx.inv_cov = 0.0f; // Full coverage
-		vtx.interior = 1;
+		vtx.interior = 1u;
 	}
-	else
+	else if (edge)
 	{
 		// Vertex indices for this edge. We need all 3 for determining exterior/interior.
-		uint prim_offset_edges = prim_offset - 3; // range: 0-17
-		uint i0 = prim_offset_edges / 6;
-		uint i1 = (i0 >= 2) ? i0 - 2 : i0 + 1;
-		uint i2 = (i0 >= 1) ? i0 - 1 : i0 + 2;
-		uint edge_offset = prim_offset_edges - 6 * i0; // range: 0-5
+		uint prim_offset_edges = prim_offset - 3u; // range: 0-17
+		uint i0 = prim_offset_edges / 6u;
+		uint i1 = (i0 >= 2u) ? i0 - 2u : i0 + 1u;
+		uint i2 = (i0 >= 1u) ? i0 - 1u : i0 + 2u;
+		uint edge_offset = prim_offset_edges - 6u * i0; // range: 0-5
 
-		// Note: order of top/bottom, inside/outside order is arbitrary,
+		// Note: order of top/bottom, inside/outside is arbitrary,
 		// as long as it assembles into two triangles forming a quad.
-		bool is_bottom = (2 <= edge_offset) && (edge_offset <= 4);
-		bool is_outside = edge_offset & 1;
+		bool is_bottom = (2u <= edge_offset) && (edge_offset <= 4u);
+		bool is_outside = (edge_offset & 1u) != 0u;
 
-		vtx = vs_main(load_vertex(load_index(3 * prim_id + i0)));
-		VS_OUTPUT other = vs_main(load_vertex(load_index(3 * prim_id + i1)));
-		VS_OUTPUT opposite = vs_main(load_vertex(load_index(3 * prim_id + i2)));
+		vtx = vs_main(load_vertex(load_index(3u * prim_id + (is_bottom ? i1 : i0))));
+		VS_OUTPUT other = vs_main(load_vertex(load_index(3u * prim_id + (is_bottom ? i0 : i1))));
+		VS_OUTPUT opposite = vs_main(load_vertex(load_index(3u * prim_id + i2)));
 
-		// Similar expansion to line AA1 except instead of expanding on both sides of
-		// the line we expand on on the side towards the outside of the triangle.
-		float2 line_delta = vtx.p.xy - other.p.xy;
-		float2 line_normal = normalize(float2(line_delta.y, -line_delta.x));
-		float2 line_expand = abs(line_delta.x) >= abs(line_delta.y) ? float2(0.0f, 2.0f) : float2(2.0f, 0.0f);
-		if ((dot(line_expand, line_normal) >= 0.0f) == (dot(opposite.p.xy - vtx.p.xy, line_normal) >= 0.0f))
-		{
-			// Expand direction point towards the interior so flip it.
-			line_expand = -line_expand;
-		}
-		float2 line_width = (line_expand * PointSize) / 2;
+		float2x2 pos_deltas = get_xy_deltas_unscaled(vtx, other, opposite);
 
-		if (is_bottom)
-			vtx = other;
-		if (is_outside)
-		{
-			vtx.p.xy += line_width;
-			vtx.inv_cov = 1.0f; // No coverage
-		}
-		else
-		{
-			vtx.inv_cov = 0.0f; // Full coverage
-		}
+		float2 expand_dir = is_outside ? get_aa1_triangle_expand_dir(vtx, other, opposite) : 0;
 
-		vtx.interior = 0;
+		// Do actual extrapolation, or no-op if expand_dir == 0.
+		extrapolate_aa1_triangle_edge(vtx, other, opposite, pos_deltas, expand_dir);
+
+		vtx.inv_cov = is_outside ? 1.0f : 0.0f; // No coverage on outside, otherwise full.
+
+		vtx.interior = 0u;
+	}
+	else // Corner cap
+	{
+		// Vertex indices for this cap. We need all 3 for determining exterior/interior.
+		uint prim_offset_cap = prim_offset - 21u; // range: 0-8
+		uint i0 = prim_offset_cap / 6u;
+		uint i1 = (i0 >= 2u) ? i0 - 2u : i0 + 1u;
+		uint i2 = (i0 >= 1u) ? i0 - 1u : i0 + 2u;
+		uint cap_offset = prim_offset_cap - 6u * i0; // range: 0-5
+
+		bool is_near_corner = cap_offset == 0u || cap_offset == 3u;
+		bool is_far_corner = cap_offset == 2u || cap_offset == 5u;
+		bool is_first_tri = cap_offset < 3u;
+
+		vtx = vs_main(load_vertex(load_index(3u * prim_id + i0)));
+		VS_OUTPUT other = vs_main(load_vertex(load_index(3u * prim_id + (is_first_tri ? i1 : i2))));
+		VS_OUTPUT opposite = vs_main(load_vertex(load_index(3u * prim_id + (is_first_tri ? i2 : i1))));
+
+		float2x2 pos_deltas = get_xy_deltas_unscaled(vtx, other, opposite);
+
+		// Get the edge expansion directions of both incident edges.
+		float2 edge_expand_dir_0 = get_aa1_triangle_expand_dir(vtx, other, opposite);
+		float2 edge_expand_dir_1 = get_aa1_triangle_expand_dir(vtx, opposite, other);
+
+		// Check if the corner is already filled by the expanded edges.
+		// This happens if the expand directions are the same.
+		// If so we output a degenerate triangle at this corner.
+		bool corner_filled = all(edge_expand_dir_0 == edge_expand_dir_1);
+
+		// Nothing if corner is filled, otherwise opposite to the bisector of the corner angle.
+		float2 far_corner_dir = corner_filled ? 0 : -normalize((pos_deltas[0] + pos_deltas[1]) / 2);
+
+		// Determine the expand direction.
+		float2 expand_dir = is_near_corner ? 0 :             // No extrapolation
+		                    is_far_corner ? far_corner_dir : // Opposite to the angle bisector of corner
+		                    edge_expand_dir_0;               // Standard AA1 edge expansion
+
+		// Do the actual extrapolation (no-op if expand_dir == 0).
+		extrapolate_aa1_triangle_edge(vtx, other, opposite, pos_deltas, expand_dir);
+
+		vtx.inv_cov = is_near_corner ? 0.0f : 1.0f; // Full coverage at near corner, otherwise none.
+	
+		vtx.interior = 0u;
 	}
 
 	return vtx;

@@ -20,6 +20,8 @@ class GameListModel final : public QAbstractTableModel
 	Q_OBJECT
 
 public:
+	static constexpr int FavoriteRole = Qt::UserRole + 1;
+	static constexpr int CustomSettingsRole = Qt::UserRole + 2;
 	enum Column : int
 	{
 		Column_Type,
@@ -43,7 +45,7 @@ public:
 	static QIcon getIconForType(GameList::EntryType type);
 	static QIcon getIconForRegion(GameList::Region region);
 
-	GameListModel(float cover_scale, bool show_cover_titles, qreal dpr, QObject* parent = nullptr);
+	GameListModel(float cover_scale, bool show_cover_titles, bool show_full_cover_titles, qreal dpr, QObject* parent = nullptr);
 	~GameListModel();
 
 	int rowCount(const QModelIndex& parent = QModelIndex()) const override;
@@ -54,6 +56,7 @@ public:
 	__fi const QString& getColumnDisplayName(int column) { return m_column_display_names[column]; }
 
 	void refresh();
+	void refreshDecorations(const std::string& path);
 	void reloadThemeSpecificImages();
 
 	bool titlesLessThan(int left_row, int right_row) const;
@@ -62,6 +65,9 @@ public:
 
 	bool getShowCoverTitles() const { return m_show_titles_for_covers; }
 	void setShowCoverTitles(bool enabled) { m_show_titles_for_covers = enabled; }
+
+	bool getShowFullCoverTitles() const { return m_show_full_titles_for_covers; }
+	void setShowFullCoverTitles(bool enabled) { m_show_full_titles_for_covers = enabled; }
 
 	float getCoverScale() const { return m_cover_scale; }
 	void setCoverScale(float scale);
@@ -84,11 +90,10 @@ private:
 	void loadOrGenerateCover(const GameList::Entry* ge);
 	void invalidateCoverForPath(const std::string& path);
 
-	static QString formatTimespan(const time_t timespan);
-
 	float m_cover_scale = 0.0f;
 	std::atomic<u32> m_cover_scale_counter{0};
 	bool m_show_titles_for_covers = false;
+	bool m_show_full_titles_for_covers = false;
 	bool m_prefer_english_titles = false;
 
 	std::array<QString, Column_Count> m_column_display_names;
@@ -96,6 +101,8 @@ private:
 	std::array<QPixmap, static_cast<u32>(GameList::Region::Count)> m_region_pixmaps;
 	QPixmap m_placeholder_pixmap;
 	QPixmap m_loading_pixmap;
+	QPixmap m_favorite_pixmap;
+	QPixmap m_custom_settings_pixmap;
 	qreal m_dpr;
 
 	std::array<QPixmap, static_cast<int>(GameList::CompatibilityRatingCount)> m_compatibility_pixmaps;

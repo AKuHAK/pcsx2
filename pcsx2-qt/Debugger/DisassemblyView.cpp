@@ -19,6 +19,7 @@
 #include <QtGui/QMouseEvent>
 #include <QtWidgets/QMenu>
 #include <QtGui/QClipboard>
+#include <QStringBuilder>
 #include "SymbolTree/NewSymbolDialogs.h"
 #include "common/StringUtil.h"
 
@@ -76,7 +77,11 @@ bool DisassemblyView::fromJson(const JsonValueWrapper& json)
 
 	auto start_address = json.value().FindMember("startAddress");
 	if (start_address != json.value().MemberEnd() && start_address->value.IsUint())
+	{
 		m_visibleStart = start_address->value.GetUint() & ~3;
+		m_navigation_history.clear();
+		m_navigation_history.pushInstantly(m_visibleStart);
+	}
 
 	auto go_to_pc_on_pause = json.value().FindMember("goToPCOnPause");
 	if (go_to_pc_on_pause != json.value().MemberEnd() && go_to_pc_on_pause->value.IsBool())
@@ -381,12 +386,53 @@ void DisassemblyView::contextShowInstructionBytes()
 	update();
 }
 
+void DisassemblyView::contextShowModuleOffset()
+{
+	m_showModuleOffset = !m_showModuleOffset;
+	update();
+}
+
 QString DisassemblyView::GetLineDisasm(u32 address)
 {
 	DisassemblyLineInfo lineInfo;
 	m_disassemblyManager.getLine(address, true, lineInfo);
 	return QString("%1 %2").arg(lineInfo.name.c_str()).arg(lineInfo.params.c_str());
 };
+
+bool DisassemblyView::supportsNavigation()
+{
+	return true;
+}
+
+bool DisassemblyView::canNavigateBack()
+{
+	return m_navigation_history.canGoBack();
+}
+
+bool DisassemblyView::canNavigateForward()
+{
+	return m_navigation_history.canGoForward();
+}
+
+void DisassemblyView::navigateBack()
+{
+	std::optional<u32> address = m_navigation_history.back();
+	if (!address.has_value())
+		return;
+
+	m_visibleStart = *address;
+	update();
+}
+
+void DisassemblyView::navigateForward()
+{
+	std::optional<u32> address = m_navigation_history.forward();
+	if (!address.has_value())
+		return;
+
+	m_visibleStart = *address;
+	update();
+}
 
 // Here we go!
 void DisassemblyView::paintEvent(QPaintEvent* event)
@@ -407,60 +453,87 @@ void DisassemblyView::paintEvent(QPaintEvent* event)
 
 	m_disassemblyManager.analyze(m_visibleStart, m_disassemblyManager.getNthNextAddress(m_visibleStart, m_visibleRows) - m_visibleStart);
 
+	// Get some extra, with lots of pseudo's we could end up short
+	m_lines = GetLines(m_visibleStart, m_visibleRows + 16);
+
 	const u32 curPC = cpu().getPC(); // Get the PC here, because it'll change when we are drawing and make it seem like there are two PCs
 
 	// Format and draw title line on first row
 	const QString titleLineString = GetDisassemblyTitleLine();
 	const QColor titleLineColor = GetDisassemblyTitleLineColor();
+
+	QColor pcHighlight;
+	QColor bpEnHighlight;
+	QColor bpDisHighlight;
+
+	if (QtHost::IsDarkApplicationTheme())
+	{
+		pcHighlight = QColor().fromRgbF(0.0, 0.0, 0.4);
+		bpEnHighlight = QColor().fromRgbF(0.4, 0.0, 0.0);
+		bpDisHighlight = QColor().fromRgbF(0.0, 0.4, 0.0);
+	}
+	else
+	{
+		pcHighlight = QColor().fromRgbF(0.4, 0.4, 0.8);
+		bpEnHighlight = QColor().fromRgbF(0.8, 0.2, 0.2);
+		bpDisHighlight = QColor().fromRgbF(0.2, 0.8, 0.2);
+	}
 	painter.fillRect(0, 0 * m_rowHeight, w, m_rowHeight, titleLineColor);
 	painter.drawText(2, 0 * m_rowHeight, w, m_rowHeight, Qt::AlignLeft, titleLineString);
 
 	// Prepare to draw the disassembly rows
 	bool inSelectionBlock = false;
-	bool alternate = m_visibleStart % 8;
+
+	auto line = m_lines.begin();
 
 	// Draw visible disassembly rows
-	for (u32 i = 0; i < m_visibleRows + 1; i++)
+	for (u32 row = 0; row < m_visibleRows + 1; row++)
 	{
-		// Address of instruction being displayed on row
-		const u32 rowAddress = (i * 4) + m_visibleStart;
-
 		// Row will be drawn at row index+1 to offset past title row
-		const u32 rowIndex = (i + 1) * m_rowHeight;
+		const u32 rowIndex = (row + 1) * m_rowHeight;
+
+		if (line == m_lines.end())
+		{
+			break;
+		}
 
 		// Row backgrounds
-		if (inSelectionBlock || (m_selectedAddressStart <= rowAddress && rowAddress <= m_selectedAddressEnd))
+		if (inSelectionBlock || (m_selectedAddressStart <= line->address && line->address <= m_selectedAddressEnd))
 		{
 			painter.fillRect(0, rowIndex, w, m_rowHeight, this->palette().highlight());
-			inSelectionBlock = m_selectedAddressEnd != rowAddress;
+			inSelectionBlock = m_selectedAddressEnd != line->address;
 		}
 		else
 		{
-			painter.fillRect(0, rowIndex, w, m_rowHeight, alternate ? this->palette().base() : this->palette().alternateBase());
+			painter.fillRect(0, rowIndex, w, m_rowHeight, this->palette().base());
 		}
 
-		// Row text
-		painter.setPen(GetAddressFunctionColor(rowAddress));
-		QString lineString = DisassemblyStringFromAddress(rowAddress, painter.font(), curPC, rowAddress == m_selectedAddressStart);
-
-		painter.drawText(2, rowIndex, w, m_rowHeight, Qt::AlignLeft, lineString);
+		if (line->address == curPC)
+		{
+			painter.fillRect(0, rowIndex, w, m_rowHeight, pcHighlight);
+		}
 
 		// Breakpoint marker
 		bool enabled;
-		if (CBreakPoints::IsAddressBreakPoint(cpu().getCpuType(), rowAddress, &enabled) && !CBreakPoints::IsTempBreakPoint(cpu().getCpuType(), rowAddress))
+		if (CBreakPoints::IsAddressBreakPoint(cpu().getCpuType(), line->address, &enabled) && !CBreakPoints::IsTempBreakPoint(cpu().getCpuType(), line->address))
 		{
 			if (enabled)
 			{
-				painter.setPen(Qt::green);
-				painter.drawText(2, rowIndex, w, m_rowHeight, Qt::AlignLeft, "\u25A0");
+				painter.fillRect(0, rowIndex, w, m_rowHeight, bpEnHighlight);
 			}
 			else
 			{
-				painter.drawText(2, rowIndex, w, m_rowHeight, Qt::AlignLeft, "\u2612");
+				painter.fillRect(0, rowIndex, w, m_rowHeight, bpDisHighlight);
 			}
 		}
-		alternate = !alternate;
+
+		// Row text
+		painter.setPen(GetAddressFunctionColor(line->address));
+		painter.drawText(2, rowIndex, w, m_rowHeight, Qt::AlignLeft, line->text);
+
+		++line;
 	}
+
 	// Draw the branch lines
 	// This is where it gets a little scary
 	// It's been mostly copied from the wx implementation
@@ -490,13 +563,13 @@ void DisassemblyView::paintEvent(QPaintEvent* event)
 		}
 		else
 		{
+			int row = branchLine.type == LINE_UP ? GetFirstRowFromAddr(branchLine.first) : GetLastRowFromAddr(branchLine.first);
+
 			// Explaination
-			// ((branchLine.first - m_visibleStart) -> Find the amount of bytes from the top of the view
-			// / 4 -> Convert that into rowss in instructions
 			// + 1 -> Offset 1 to account for column title row
 			// * m_rowHeight -> convert that into rows in pixels
 			// + (m_rowHeight / 2) -> Add half a row in pixels to center the arrow
-			top = (((branchLine.first - m_visibleStart) / 4 + 1) * m_rowHeight) + (m_rowHeight / 2);
+			top = ((row + 1) * m_rowHeight) + (m_rowHeight / 2);
 		}
 
 		if (branchLine.second < m_visibleStart)
@@ -509,7 +582,8 @@ void DisassemblyView::paintEvent(QPaintEvent* event)
 		}
 		else
 		{
-			bottom = (((branchLine.second - m_visibleStart) / 4 + 1) * m_rowHeight) + (m_rowHeight / 2);
+			int row = branchLine.type == LINE_UP ? GetLastRowFromAddr(branchLine.second) : GetFirstRowFromAddr(branchLine.second);
+			bottom = ((row + 1) * m_rowHeight) + (m_rowHeight / 2);
 		}
 
 		branchCount++;
@@ -582,7 +656,7 @@ void DisassemblyView::mousePressEvent(QMouseEvent* event)
 	if (selectedRowIndex > 0)
 	{
 		// Calculate address of selected row. Index minus one for title row.
-		const u32 selectedAddress = ((selectedRowIndex - 1) * 4) + m_visibleStart;
+		const u32 selectedAddress = GetAddrFromRow(selectedRowIndex - 1);
 		if (event->buttons() & Qt::LeftButton)
 		{
 			if (event->modifiers() & Qt::ShiftModifier)
@@ -623,25 +697,27 @@ void DisassemblyView::mouseDoubleClickEvent(QMouseEvent* event)
 	if (selectedRowIndex > 0)
 	{
 		// Calculate address of selected row. Index minus one for title row.
-		toggleBreakpoint(((selectedRowIndex - 1) * 4) + m_visibleStart);
+		toggleBreakpoint(GetAddrFromRow(selectedRowIndex - 1));
 	}
 }
 
 void DisassemblyView::wheelEvent(QWheelEvent* event)
 {
-	if (event->angleDelta().y() < 0) // todo: max address bounds check?
-	{
+	if (event->angleDelta().y() < 0)
 		m_visibleStart += 4;
-	}
 	else if (event->angleDelta().y() && m_visibleStart > 0)
-	{
 		m_visibleStart -= 4;
-	}
+
+	m_navigation_history.pushWithDelay(m_visibleStart);
 	update();
 }
 
 void DisassemblyView::keyPressEvent(QKeyEvent* event)
 {
+	// Alt is used for the global navigation shortcuts.
+	if (event->modifiers() & Qt::AltModifier)
+		return;
+
 	switch (event->key())
 	{
 		case Qt::Key_Up:
@@ -653,15 +729,19 @@ void DisassemblyView::keyPressEvent(QKeyEvent* event)
 			// Auto scroll
 			if (m_visibleStart > m_selectedAddressStart)
 				m_visibleStart -= 4;
+
+			m_navigation_history.pushWithDelay(m_visibleStart);
+			break;
 		}
-		break;
 		case Qt::Key_PageUp:
 		{
 			m_selectedAddressStart -= m_visibleRows * 4;
 			m_selectedAddressEnd = m_selectedAddressStart;
 			m_visibleStart -= m_visibleRows * 4;
+
+			m_navigation_history.pushWithDelay(m_visibleStart);
+			break;
 		}
-		break;
 		case Qt::Key_Down:
 		{
 			m_selectedAddressEnd += 4;
@@ -673,6 +753,7 @@ void DisassemblyView::keyPressEvent(QKeyEvent* event)
 			if (m_visibleStart + ((m_visibleRows - 1) * 4) < m_selectedAddressEnd)
 				m_visibleStart += 4;
 
+			m_navigation_history.pushWithDelay(m_visibleStart);
 			break;
 		}
 		case Qt::Key_PageDown:
@@ -680,6 +761,7 @@ void DisassemblyView::keyPressEvent(QKeyEvent* event)
 			m_selectedAddressStart += m_visibleRows * 4;
 			m_selectedAddressEnd = m_selectedAddressStart;
 			m_visibleStart += m_visibleRows * 4;
+			m_navigation_history.pushWithDelay(m_visibleStart);
 			break;
 		}
 		case Qt::Key_G:
@@ -706,6 +788,9 @@ void DisassemblyView::keyPressEvent(QKeyEvent* event)
 			break;
 		case Qt::Key_I:
 			m_showInstructionBytes = !m_showInstructionBytes;
+			break;
+		case Qt::Key_O:
+			m_showModuleOffset = !m_showModuleOffset;
 			break;
 	}
 
@@ -823,6 +908,12 @@ void DisassemblyView::openContextMenu(QPoint pos)
 	show_instruction_bytes_action->setChecked(m_showInstructionBytes);
 	connect(show_instruction_bytes_action, &QAction::triggered, this, &DisassemblyView::contextShowInstructionBytes);
 
+	QAction* show_module_offset_action = menu->addAction(tr("Show Module &Offset"));
+	show_module_offset_action->setShortcut(QKeySequence(Qt::Key_O));
+	show_module_offset_action->setCheckable(true);
+	show_module_offset_action->setChecked(m_showModuleOffset);
+	connect(show_module_offset_action, &QAction::triggered, this, &DisassemblyView::contextShowModuleOffset);
+
 	menu->popup(this->mapToGlobal(pos));
 }
 
@@ -871,12 +962,11 @@ QColor DisassemblyView::GetDisassemblyTitleLineColor()
 	return title_line_color.lighter(104);
 }
 
-inline QString DisassemblyView::DisassemblyStringFromAddress(u32 address, QFont font, u32 pc, bool selected)
+inline std::pair<QString, int> DisassemblyView::DisassemblyStringFromAddress(u32 address)
 {
+	using namespace Qt::StringLiterals;
 	DisassemblyLineInfo line;
 
-	if (!cpu().isValidAddress(address))
-		return tr("%1 NOT VALID ADDRESS").arg(address, 8, 16, QChar('0')).toUpper();
 	// Todo? support non symbol view?
 	m_disassemblyManager.getLine(address, true, line);
 
@@ -885,51 +975,93 @@ inline QString DisassemblyView::DisassemblyStringFromAddress(u32 address, QFont 
 	const bool isCurrentPC = cpu().getPC() == address;
 
 	FunctionInfo function = cpu().GetSymbolGuardian().FunctionStartingAtAddress(address);
-	SymbolInfo symbol = cpu().GetSymbolGuardian().SymbolStartingAtAddress(address);
-	const bool showOpcode = m_showInstructionBytes && cpu().isAlive();
+	const bool showBytes = m_showInstructionBytes && cpu().isAlive();
+	std::optional<IopMod> module = std::nullopt;
 
-	QString lineString;
-	if (showOpcode)
+	if (m_showModuleOffset)
 	{
-		lineString = QString(" %1 %2 %3  %4 %5  %6 %7");
+		std::vector<IopMod> modules = cpu().GetModuleList();
+		for (auto& m : modules)
+		{
+			if (address >= m.text_addr && address <= m.text_addr + m.text_size)
+			{
+				module = std::move(m);
+			}
+		}
+	}
+
+	QString disasmLine = "    "_L1;
+
+	if (m_showModuleOffset && module.has_value())
+	{
+		QString name = QString::fromStdString(module.value().name);
+		u32 offset = address - module.value().text_addr;
+
+		disasmLine = disasmLine % "["_L1 % name % "]"_L1 % QString("+%1").arg(offset, 0, 16).toUpper().leftJustified(4);
 	}
 	else
 	{
-		lineString = QString(" %1 %2  %3 %4  %5 %6");
+		disasmLine = disasmLine % QString("%1").arg(address, 8, 16, QChar('0')).toUpper();
 	}
 
-	if (function.is_no_return)
+	if (showBytes)
 	{
-		lineString = lineString.arg("NR");
-	}
-	else
-	{
-		lineString = lineString.arg("  ");
-	}
-
-	if (symbol.name.empty())
-		lineString = lineString.arg(address, 8, 16, QChar('0')).toUpper();
-	else
-	{
-		QFontMetrics metric(font);
-		QString symbolString = QString::fromStdString(symbol.name);
-
-		lineString = lineString.arg(metric.elidedText(symbolString, Qt::ElideRight, (selected ? 32 : 7) * font.pointSize()));
-	}
-
-	if (showOpcode)
-	{
+		disasmLine = disasmLine % " "_L1;
 		const u32 opcode = cpu().Read32(address);
-		lineString = lineString.arg(QtUtils::FilledQStringFromValue(opcode, 16));
+		disasmLine = disasmLine % QString("%1").arg(QtUtils::FilledQStringFromValue(opcode, 16));
 	}
 
-	lineString = lineString.leftJustified(4, ' ') // Address / symbol
-	                 .arg(line.name.c_str())
-	                 .arg(line.params.c_str()) // opcode + arguments
-	                 .arg(isConditional ? (isConditionalMet ? "# true" : "# false") : "")
-	                 .arg(isCurrentPC ? "<--" : "");
+	disasmLine = disasmLine % "  "_L1;
+	disasmLine = disasmLine % QString("%1 %2  %3 %4")
+	                              .arg(QString(line.name.c_str()).leftJustified(8))
+	                              .arg(line.params.c_str()) // opcode + arguments
+	                              .arg(isConditional ? (isConditionalMet ? "# true" : "# false") : "")
+	                              .arg(isCurrentPC ? "<--" : "");
 
-	return lineString;
+	return {disasmLine, line.totalSize};
+}
+
+std::vector<DisassemblyView::DisasmLine> DisassemblyView::GetLines(u32 _address, u32 count)
+{
+	using namespace Qt::StringLiterals;
+
+	std::vector<DisassemblyView::DisasmLine> lines;
+	// Work around the fact that the debugger underflows the m_visibleStart
+	// variable when putting 0 in the goto dialog
+	s64 address = (int)_address;
+	s64 end = address + count * 4;
+
+	while (address < end)
+	{
+		DisassemblyView::DisasmLine line;
+		line.address = address;
+
+		if (!cpu().isValidAddress(address))
+		{
+			line.text = "INVALID ADDRESS";
+			line.size = 4;
+			address += 4;
+		}
+		else
+		{
+			SymbolInfo symbol = cpu().GetSymbolGuardian().SymbolStartingAtAddress(address);
+			if (!symbol.name.empty())
+			{
+				line.text = QString::fromStdString(symbol.name) % ":";
+				lines.push_back(line);
+			}
+
+			auto [text, size] = DisassemblyStringFromAddress(address);
+			line.text = text;
+			line.size = size;
+			address += size;
+		}
+
+		lines.push_back(line);
+	}
+
+
+	return lines;
 }
 
 QColor DisassemblyView::GetAddressFunctionColor(u32 address)
@@ -1014,6 +1146,8 @@ void DisassemblyView::gotoAddress(u32 address, bool should_set_focus)
 	m_selectedAddressStart = destAddress;
 	m_selectedAddressEnd = destAddress;
 
+	m_navigation_history.pushInstantly(m_visibleStart);
+
 	update();
 	if (should_set_focus)
 		setFocus();
@@ -1088,6 +1222,42 @@ bool DisassemblyView::FunctionCanRestore(u32 address)
 		address = function.address.value;
 
 	return m_stubbedFunctions.find(address) != m_stubbedFunctions.end();
+}
+
+u32 DisassemblyView::GetAddrFromRow(int row)
+{
+	if (static_cast<size_t>(row) >= m_lines.size())
+	{
+		return 0;
+	}
+
+	return m_lines[row].address;
+}
+
+s32 DisassemblyView::GetFirstRowFromAddr(u32 addr)
+{
+	for (auto l = m_lines.begin(); l != m_lines.end(); ++l)
+	{
+		if (addr == l->address)
+		{
+			return std::distance(m_lines.begin(), l);
+		}
+	}
+
+	return -1;
+}
+
+s32 DisassemblyView::GetLastRowFromAddr(u32 addr)
+{
+	for (auto l = m_lines.rbegin(); l != m_lines.rend(); ++l)
+	{
+		if (addr == l->address)
+		{
+			return std::distance(m_lines.begin(), l.base()) - 1;
+		}
+	}
+
+	return -1;
 }
 
 #include "moc_DisassemblyView.cpp"

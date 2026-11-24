@@ -130,6 +130,9 @@ void psxBreakpoint(bool memcheck)
 		auto cond = CBreakPoints::GetBreakPointCondition(BREAKPOINT_IOP, pc);
 		if (cond && !cond->Evaluate())
 			return;
+
+		if (!CBreakPoints::HandleBreakpointHit(BREAKPOINT_IOP, pc))
+			return;
 	}
 
 	CBreakPoints::SetBreakpointTriggered(true, BREAKPOINT_IOP);
@@ -146,10 +149,10 @@ void psxMemcheck(u32 op, u32 bits, bool store)
 
 	u32 end = start + bits / 8;
 
-	auto checks = CBreakPoints::GetMemChecks(BREAKPOINT_IOP);
+	const auto checks = CBreakPoints::GetMemChecks(BREAKPOINT_IOP);
 	for (size_t i = 0; i < checks.size(); i++)
 	{
-		auto& check = checks[i];
+		const auto& check = checks[i];
 
 		if (check.result == 0)
 			continue;
@@ -247,7 +250,7 @@ static void doBranch(s32 tar) {
 	}
 
 	// Override the memory size argument to IOPBOOT
-	if(tar == 0xbfc4a000) {
+	if(static_cast<u32>(tar) == 0xbfc4a000) {
 		psxRegs.GPR.n.a0 = Ps2MemSize::ExposedIopRam >> 20;
 	}
 

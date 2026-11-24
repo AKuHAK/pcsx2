@@ -39,13 +39,16 @@ public:
 		bool vk_ext_memory_budget : 1;
 		bool vk_ext_calibrated_timestamps : 1;
 		bool vk_ext_rasterization_order_attachment_access : 1;
+		bool vk_ext_rasterization_order_attachment_access_depth : 1;
 		bool vk_ext_full_screen_exclusive : 1;
 		bool vk_ext_line_rasterization : 1;
 		bool vk_swapchain_maintenance1 : 1;
 		bool vk_swapchain_maintenance1_is_khr : 1;
 		bool vk_khr_driver_properties : 1;
 		bool vk_khr_shader_non_semantic_info : 1;
+		bool vk_khr_synchronization2 : 1;
 		bool vk_ext_attachment_feedback_loop_layout : 1;
+		bool vk_ext_fragment_shader_interlock : 1;
 	};
 
 	// Global state accessors
@@ -61,8 +64,7 @@ public:
 	// The interaction between raster order attachment access and fbfetch is unclear.
 	__fi bool UseFeedbackLoopLayout() const
 	{
-		return (m_optional_extensions.vk_ext_attachment_feedback_loop_layout &&
-				!m_optional_extensions.vk_ext_rasterization_order_attachment_access);
+		return m_optional_extensions.vk_ext_attachment_feedback_loop_layout && !m_features.framebuffer_fetch;
 	}
 
 	// Helpers for getting constants
@@ -82,14 +84,17 @@ public:
 	__fi bool IsDeviceAMD() const { return (m_device_properties.vendorID == 0x1002); }
 
 	// Creates a simple render pass.
-	VkRenderPass GetRenderPass(VkFormat color_format, VkFormat depth_format,
+	VkRenderPass GetRenderPass(
+		VkFormat color_format, VkFormat depth_as_color_format, VkFormat depth_format,
 		VkAttachmentLoadOp color_load_op = VK_ATTACHMENT_LOAD_OP_LOAD,
 		VkAttachmentStoreOp color_store_op = VK_ATTACHMENT_STORE_OP_STORE,
+		VkAttachmentLoadOp depth_as_color_load_op = VK_ATTACHMENT_LOAD_OP_LOAD,
+		VkAttachmentStoreOp depth_as_color_store_op = VK_ATTACHMENT_STORE_OP_STORE,
 		VkAttachmentLoadOp depth_load_op = VK_ATTACHMENT_LOAD_OP_LOAD,
 		VkAttachmentStoreOp depth_store_op = VK_ATTACHMENT_STORE_OP_STORE,
 		VkAttachmentLoadOp stencil_load_op = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-		VkAttachmentStoreOp stencil_store_op = VK_ATTACHMENT_STORE_OP_DONT_CARE, bool color_feedback_loop = false,
-		bool depth_sampling = false);
+		VkAttachmentStoreOp stencil_store_op = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+		bool color_feedback_loop = false, bool depth_feedback_loop = false);
 
 	// Gets a non-clearing version of the specified render pass. Slow, don't call in hot path.
 	VkRenderPass GetRenderPassForRestarting(VkRenderPass pass);
@@ -166,19 +171,22 @@ private:
 	{
 		struct
 		{
-			u32 color_format : 8;
-			u32 depth_format : 8;
-			u32 color_load_op : 2;
-			u32 color_store_op : 1;
-			u32 depth_load_op : 2;
-			u32 depth_store_op : 1;
-			u32 stencil_load_op : 2;
-			u32 stencil_store_op : 1;
-			u32 color_feedback_loop : 1;
-			u32 depth_sampling : 1;
+			u64 color_format : 8;
+			u64 depth_as_color_format : 8;
+			u64 depth_format : 8;
+			u64 color_load_op : 2;
+			u64 color_store_op : 1;
+			u64 depth_as_color_load_op : 2;
+			u64 depth_as_color_store_op : 1;
+			u64 depth_load_op : 2;
+			u64 depth_store_op : 1;
+			u64 stencil_load_op : 2;
+			u64 stencil_store_op : 1;
+			u64 color_feedback_loop : 1;
+			u64 depth_feedback_loop : 1;
 		};
 
-		u32 key;
+		u64 key;
 	};
 
 	using ExtensionList = std::vector<const char*>;
@@ -208,6 +216,13 @@ private:
 	void CalibrateSpinTimestamp();
 	u64 GetCPUTimestamp();
 
+	enum class QueryState
+	{
+		None,
+		Querying,
+		Ready,
+	};
+
 	struct FrameResources
 	{
 		// [0] - Init (upload) command buffer, [1] - draw command buffer
@@ -219,7 +234,8 @@ private:
 		u32 submit_timestamp = 0;
 		bool init_buffer_used = false;
 		bool needs_fence_wait = false;
-		bool timestamp_written = false;
+		QueryState timestamp_query_state = QueryState::None;
+		QueryState pipeline_statistics_query = QueryState::None;
 
 		std::vector<std::function<void()>> cleanup_resources;
 	};
@@ -276,6 +292,11 @@ private:
 	bool m_wants_new_timestamp_calibration = false;
 	VkTimeDomainEXT m_calibrated_timestamp_type = VK_TIME_DOMAIN_DEVICE_EXT;
 
+	VkQueryPool m_pipeline_statistics_query_pool = VK_NULL_HANDLE;
+	GPUPipelineStatistics m_accumulated_gpu_pipeline_statistics{};
+	bool m_gpu_pipeline_statistics_enabled = false;
+	bool m_gpu_pipeline_statistics_supported = false;
+
 	std::array<FrameResources, NUM_COMMAND_BUFFERS> m_frame_resources;
 	u64 m_next_fence_counter = 1;
 	u64 m_completed_fence_counter = 0;
@@ -283,7 +304,7 @@ private:
 
 	bool m_last_submit_failed = false;
 
-	std::map<u32, VkRenderPass> m_render_pass_cache;
+	std::map<u64, VkRenderPass> m_render_pass_cache;
 
 	VkDebugUtilsMessengerEXT m_debug_messenger_callback = VK_NULL_HANDLE;
 
@@ -292,14 +313,30 @@ private:
 	VkPhysicalDeviceDriverPropertiesKHR m_device_driver_properties = {};
 	OptionalExtensions m_optional_extensions = {};
 
+	u32 m_max_framebuffer_width = 0;
+	u32 m_max_framebuffer_height = 0;
 public:
-	enum FeedbackLoopFlag : u8
+	enum class ResourceType
 	{
-		FeedbackLoopFlag_None = 0,
-		FeedbackLoopFlag_ReadAndWriteRT = 1,
-		FeedbackLoopFlag_ReadDepth = 2,
-		FeedbackLoopFlag_ReadAndWriteDepth = 4,
+		SRV, // Shader resource view (read only)
+		UAV, // Unordered access (read/write)
 	};
+
+	static constexpr GSTextureVK::Layout GetResourceLayout(ResourceType type)
+	{
+		switch (type)
+		{
+			default:
+				pxFailRel("Impossible.");
+			case ResourceType::SRV:
+				return GSTextureVK::Layout::ShaderReadOnly;
+			case ResourceType::UAV:
+				return GSTextureVK::Layout::ReadWriteImage;
+		}
+	}
+
+	using FramebufferInfo = GSTextureVK::FramebufferInfo;
+	using FeedbackLoopFlags = FeedbackLoopFlagsVK;
 
 	struct alignas(8) PipelineSelector
 	{
@@ -311,9 +348,9 @@ public:
 			{
 				u32 topology : 2;
 				u32 rt : 1;
+				u32 ds_as_rt : 1;
 				u32 ds : 1;
-				u32 line_width : 1;
-				u32 feedback_loop_flags : 3;
+				FeedbackLoopFlags feedback_loop_flags : 3;
 			};
 
 			u32 key;
@@ -330,11 +367,11 @@ public:
 
 		__fi PipelineSelector() { std::memset(this, 0, sizeof(*this)); }
 
-		__fi bool IsRTFeedbackLoop() const { return ((feedback_loop_flags & FeedbackLoopFlag_ReadAndWriteRT) != 0); }
-		__fi bool IsDepthFeedbackLoop() const { return ((feedback_loop_flags & FeedbackLoopFlag_ReadAndWriteDepth) != 0); }
-		__fi bool IsTestingAndSamplingDepth() const { return ((feedback_loop_flags & (FeedbackLoopFlag_ReadDepth | FeedbackLoopFlag_ReadAndWriteDepth)) != 0); }
+		__fi bool IsRTFeedbackLoop() const { return ::IsRTFeedbackLoop(feedback_loop_flags); }
+		__fi bool IsDepthFeedbackLoop() const { return ::IsDepthFeedbackLoop(feedback_loop_flags); }
+		__fi bool IsTestingAndSamplingDepth() const { return ::IsTestingAndSamplingDepth(feedback_loop_flags); }
 	};
-	static_assert(sizeof(PipelineSelector) == 24, "Pipeline selector is 24 bytes");
+	static_assert(sizeof(PipelineSelector) == 32, "Pipeline selector is 32 bytes");
 
 	struct PipelineSelectorHash
 	{
@@ -368,6 +405,8 @@ public:
 		TFX_TEXTURE_RT,
 		TFX_TEXTURE_PRIMID,
 		TFX_TEXTURE_DEPTH,
+		TFX_TEXTURE_RT_ROV,
+		TFX_TEXTURE_DEPTH_ROV,
 
 		NUM_TFX_TEXTURES
 	};
@@ -398,17 +437,26 @@ private:
 
 	std::unordered_map<u32, VkSampler> m_samplers;
 
-	std::array<VkPipeline, static_cast<int>(ShaderConvert::Count)> m_convert{};
+	std::vector<VkPipeline> m_convert;
 	std::array<VkPipeline, static_cast<int>(PresentShader::Count)> m_present{};
-	std::array<VkPipeline, 32> m_color_copy{};
 	std::array<VkPipeline, 2> m_merge{};
 	std::array<VkPipeline, NUM_INTERLACE_SHADERS> m_interlace{};
 	VkPipeline m_colclip_setup_pipelines[2][2] = {}; // [depth][feedback_loop]
 	VkPipeline m_colclip_finish_pipelines[2][2] = {}; // [depth][feedback_loop]
-	VkRenderPass m_date_image_setup_render_passes[2][2] = {}; // [depth][clear]
-	VkPipeline m_date_image_setup_pipelines[2][4] = {}; // [depth][datm]
+	VkRenderPass m_primid_image_setup_render_passes[2][2] = {}; // [depth][clear]
+	VkPipeline m_primid_image_setup_pipelines[2][4] = {}; // [depth][datm]
 	VkPipeline m_fxaa_pipeline = {};
 	VkPipeline m_shadeboost_pipeline = {};
+
+	VkPipeline GetConvertPipeline(ShaderConvertSelector shader) const
+	{
+		return m_convert[shader.Index()];
+	}
+
+	VkPipeline GetConvertPipeline(ShaderConvert shader) const
+	{
+		return m_convert[ShaderConvertSelector(shader).Index()];
+	}
 
 	std::unordered_map<u32, VkShaderModule> m_tfx_vertex_shaders;
 	std::unordered_map<GSHWDrawConfig::PSSelector, VkShaderModule, GSHWDrawConfig::PSSelectorHash>
@@ -426,8 +474,6 @@ private:
 
 	VkRenderPass m_tfx_render_pass[2][2][2][3][2][2][3][3] = {}; // [rt][ds][colclip][date][fbl][dsp][rt_op][ds_op]
 
-	VkDescriptorSetLayout m_cas_ds_layout = VK_NULL_HANDLE;
-	VkPipelineLayout m_cas_pipeline_layout = VK_NULL_HANDLE;
 	std::array<VkPipeline, NUM_CAS_PIPELINES> m_cas_pipelines = {};
 	VkPipeline m_imgui_pipeline = VK_NULL_HANDLE;
 
@@ -435,15 +481,15 @@ private:
 	GSHWDrawConfig::PSConstantBuffer m_ps_cb_cache;
 	GSHWDrawConfig::VSPushConstants m_vs_pc_cache;
 
+	std::string m_convert_source;
 	std::string m_tfx_source;
 
-	GSTexture* CreateSurface(
-		GSTexture::Type type, int width, int height, int levels, GSTexture::Format format) override;
+	GSTexture* CreateSurface(GSTexture::Usage usage, int width, int height, int levels, GSTexture::Format format) override;
 
 	void DoMerge(GSTexture* sTex[3], GSVector4* sRect, GSTexture* dTex, GSVector4* dRect, const GSRegPMODE& PMODE,
-		const GSRegEXTBUF& EXTBUF, u32 c, const bool linear) final;
+		const GSRegEXTBUF& EXTBUF, u32 c, const Filter filter) final;
 	void DoInterlace(GSTexture* sTex, const GSVector4& sRect, GSTexture* dTex, const GSVector4& dRect,
-		ShaderInterlace shader, bool linear, const InterlaceConstantBuffer& cb) final;
+		ShaderInterlace shader, Filter filter, const InterlaceConstantBuffer& cb) final;
 	void DoShadeBoost(GSTexture* sTex, GSTexture* dTex, const float params[4]) final;
 	void DoFXAA(GSTexture* sTex, GSTexture* dTex) final;
 
@@ -482,9 +528,11 @@ private:
 	void DestroyResources();
 
 protected:
+	using GSDevice::DoStretchRect; // Suppress overloaded virtual function warning
 	virtual void DoStretchRect(GSTexture* sTex, const GSVector4& sRect, GSTexture* dTex, const GSVector4& dRect,
-		GSHWDrawConfig::ColorMaskSelector cms, ShaderConvert shader, bool linear) override;
-
+		ShaderConvertSelector shader, Filter filter) override;
+	virtual void DoStretchRect(GSTexture* sTex, const GSVector4& sRect, const GSVector4& dRect,
+		PresentShader shader, Filter filter) override;
 public:
 	GSDeviceVK();
 	~GSDeviceVK() override;
@@ -500,11 +548,10 @@ public:
 	/// Returns true if Vulkan is suitable as a default for the devices in the system.
 	static bool IsSuitableDefaultRenderer();
 
-	__fi VkRenderPass GetTFXRenderPass(bool rt, bool ds, bool colclip, bool stencil, bool fbl, bool dsp,
-		VkAttachmentLoadOp rt_op, VkAttachmentLoadOp ds_op) const
-	{
-		return m_tfx_render_pass[rt][ds][colclip][stencil][fbl][dsp][rt_op][ds_op];
-	}
+	__fi VkRenderPass GetTFXRenderPass(
+		bool rt, bool ds_as_rt, bool ds, bool colclip, bool stencil, bool rt_feedback, bool depth_feedback,
+		VkAttachmentLoadOp rt_op, VkAttachmentLoadOp ds_as_rt_op, VkAttachmentLoadOp ds_op);
+
 	__fi VkSampler GetPointSampler() const { return m_point_sampler; }
 	__fi VkSampler GetLinearSampler() const { return m_linear_sampler; }
 
@@ -527,7 +574,13 @@ public:
 	bool IsPresenting() const;
 
 	bool SetGPUTimingEnabled(bool enabled) override;
+	void StartGPUTiming(u32 index);
+	void EndGPUTiming(u32 index);
+	void ReadGPUTiming(u32 index);
 	float GetAndResetAccumulatedGPUTime() override;
+
+	bool SetGPUPipelineStatisticsEnabled(bool enabled) override;
+	GPUPipelineStatistics GetAndResetAccumulatedGPUPipelineStatistics() override;
 
 	void PushDebugGroup(const char* fmt, ...) override;
 	void PopDebugGroup() override;
@@ -548,19 +601,19 @@ public:
 	void CopyRect(GSTexture* sTex, GSTexture* dTex, const GSVector4i& r, u32 destX, u32 destY) override;
 
 	void PresentRect(GSTexture* sTex, const GSVector4& sRect, GSTexture* dTex, const GSVector4& dRect,
-		PresentShader shader, float shaderTime, bool linear) override;
+		PresentShader shader, float shaderTime, Filter filter) override;
 	void DrawMultiStretchRects(
-		const MultiStretchRect* rects, u32 num_rects, GSTexture* dTex, ShaderConvert shader) override;
-	void DoMultiStretchRects(const MultiStretchRect* rects, u32 num_rects, GSTextureVK* dTex, ShaderConvert shader);
+		const MultiStretchRect* rects, u32 num_rects, GSTexture* dTex, ShaderConvertSelector shader) override;
+	void DoMultiStretchRects(const MultiStretchRect* rects, u32 num_rects, GSTextureVK* dTex, ShaderConvertSelector shader);
 
 	void BeginRenderPassForStretchRect(
 		GSTextureVK* dTex, const GSVector4i& dtex_rc, const GSVector4i& dst_rc, bool allow_discard = true);
 	void DoStretchRect(GSTextureVK* sTex, const GSVector4& sRect, GSTextureVK* dTex, const GSVector4& dRect,
-		VkPipeline pipeline, bool linear, bool allow_discard);
+		VkPipeline pipeline, Filter filter, bool allow_discard);
 	void DrawStretchRect(const GSVector4& sRect, const GSVector4& dRect, const GSVector2i& ds);
 
 	void BlitRect(GSTexture* sTex, const GSVector4i& sRect, u32 sLevel, GSTexture* dTex, const GSVector4i& dRect,
-		u32 dLevel, bool linear);
+		u32 dLevel, Filter filter);
 
 	void UpdateCLUTTexture(
 		GSTexture* sTex, float sScale, u32 offsetX, u32 offsetY, GSTexture* dTex, u32 dOffset, u32 dSize) override;
@@ -575,23 +628,27 @@ public:
 	void IASetIndexBuffer(const void* index, size_t count);
 	void VSSetIndexBuffer(const void* index, size_t count);
 
-	void PSSetShaderResource(int i, GSTexture* sr, bool check_state);
+	void PSSetROVs(GSTexture* rt, GSTexture* ds, bool write_rt, bool write_ds);
+	void PSSetShaderResource(int i, GSTexture* sr, bool check_state, ResourceType type = ResourceType::SRV);
 	void PSSetSampler(GSHWDrawConfig::SamplerSelector sel);
 
 	void OMSetRenderTargets(GSTexture* rt, GSTexture* ds, const GSVector4i& scissor,
-		FeedbackLoopFlag feedback_loop = FeedbackLoopFlag_None);
-
+		const GSVector2i& viewport_size = {});
+	void OMSetRenderTargets(FramebufferInfo info, const GSVector4i& scissor,
+		const GSVector2i& viewport_size = {});
 	void SetVSConstantBuffer(const GSHWDrawConfig::VSConstantBuffer& cb);
 	void SetPSConstantBuffer(const GSHWDrawConfig::PSConstantBuffer& cb);
 	void SetVSPushConstants(u32 base_vertex, u32 base_index = 0, bool force_update = false);
 	bool BindDrawPipeline(const PipelineSelector& p);
 
+	void ExternalFeedbackBarrier(GSTextureVK* tex);
 	void RenderHW(GSHWDrawConfig& config) override;
 	void UpdateHWPipelineSelector(GSHWDrawConfig& config, PipelineSelector& pipe);
 	void UploadHWDrawVerticesAndIndices(GSHWDrawConfig& config);
-	VkImageMemoryBarrier GetColorBufferFeedbackBarrier(GSTextureVK* rt) const;
-	VkImageMemoryBarrier GetDepthStencilBufferFeedbackBarrier(GSTextureVK* ds) const;
-	VkDependencyFlags GetFeedbackBarrierDependencyFlags() const;
+	VkImageLayout GetFeedbackLoopLayout() const;
+	VkDependencyFlags GetFeedbackBarrierDependencyFlags(bool by_region) const;
+	VkAccessFlags2 GetFeedbackLoopInputAccessFlags() const;
+	void FeedbackBarrier(GSTextureVK* rt, GSTextureVK* ds, bool by_region);
 	void SendHWDraw(const GSHWDrawConfig& config, GSTextureVK* draw_rt, GSTextureVK* draw_ds,
 		bool one_barrier, bool full_barrier);
 
@@ -602,7 +659,7 @@ public:
 public:
 	VkFormat LookupNativeFormat(GSTexture::Format format) const;
 
-	__fi VkFramebuffer GetCurrentFramebuffer() const { return m_current_framebuffer; }
+	__fi VkFramebuffer GetCurrentFramebuffer() const { return m_current_framebuffer.framebuffer; }
 
 	/// Ends any render pass, executes the command buffer, and invalidates cached state.
 	void ExecuteCommandBuffer(bool wait_for_completion);
@@ -634,7 +691,9 @@ public:
 	void BeginClearRenderPass(VkRenderPass rp, const GSVector4i& rect, const VkClearValue* cv, u32 cv_count);
 	void BeginClearRenderPass(VkRenderPass rp, const GSVector4i& rect, u32 clear_color);
 	void BeginClearRenderPass(VkRenderPass rp, const GSVector4i& rect, float depth, u8 stencil);
+	bool BeginPresentRenderPass(VkRenderPass rp, const GSVector4i& rect, GSTextureVK* swap_chain);
 	void EndRenderPass();
+	void EndPresentRenderPass();
 
 	void SetViewport(const VkViewport& viewport);
 	void SetScissor(const GSVector4i& scissor);
@@ -643,28 +702,31 @@ public:
 private:
 	enum DIRTY_FLAG : u32
 	{
-		DIRTY_FLAG_TFX_TEXTURE_0 = (1 << 0), // 0, 1, 2, 3, 4
-		DIRTY_FLAG_TFX_UBO = (1 << 5),
-		DIRTY_FLAG_UTILITY_TEXTURE = (1 << 6),
-		DIRTY_FLAG_BLEND_CONSTANTS = (1 << 7),
-		DIRTY_FLAG_LINE_WIDTH = (1 << 8),
-		DIRTY_FLAG_INDEX_BUFFER = (1 << 9),
-		DIRTY_FLAG_VIEWPORT = (1 << 10),
-		DIRTY_FLAG_SCISSOR = (1 << 11),
-		DIRTY_FLAG_PIPELINE = (1 << 12),
-		DIRTY_FLAG_VS_CONSTANT_BUFFER = (1 << 13),
-		DIRTY_FLAG_PS_CONSTANT_BUFFER = (1 << 14),
-		DIRTY_FLAG_VS_PUSH_CONSTANTS = (1 << 15),
+		DIRTY_FLAG_TFX_TEXTURE_0 = (1 << 0), // 0, 1, 2, 3, 4, 5, 6
+		DIRTY_FLAG_TFX_UBO = (1 << 7),
+		DIRTY_FLAG_UTILITY_TEXTURE = (1 << 8),
+		DIRTY_FLAG_BLEND_CONSTANTS = (1 << 9),
+		DIRTY_FLAG_LINE_WIDTH = (1 << 10),
+		DIRTY_FLAG_INDEX_BUFFER = (1 << 11),
+		DIRTY_FLAG_VIEWPORT = (1 << 12),
+		DIRTY_FLAG_SCISSOR = (1 << 13),
+		DIRTY_FLAG_PIPELINE = (1 << 14),
+		DIRTY_FLAG_VS_CONSTANT_BUFFER = (1 << 15),
+		DIRTY_FLAG_PS_CONSTANT_BUFFER = (1 << 16),
+		DIRTY_FLAG_VS_PUSH_CONSTANTS = (1 << 17),
 
 		DIRTY_FLAG_TFX_TEXTURE_TEX = (DIRTY_FLAG_TFX_TEXTURE_0 << 0),
 		DIRTY_FLAG_TFX_TEXTURE_PALETTE = (DIRTY_FLAG_TFX_TEXTURE_0 << 1),
 		DIRTY_FLAG_TFX_TEXTURE_RT = (DIRTY_FLAG_TFX_TEXTURE_0 << 2),
 		DIRTY_FLAG_TFX_TEXTURE_PRIMID = (DIRTY_FLAG_TFX_TEXTURE_0 << 3),
 		DIRTY_FLAG_TFX_TEXTURE_DEPTH = (DIRTY_FLAG_TFX_TEXTURE_0 << 4),
+		DIRTY_FLAG_TFX_TEXTURE_RT_ROV = (DIRTY_FLAG_TFX_TEXTURE_0 << 5),
+		DIRTY_FLAG_TFX_TEXTURE_DEPTH_ROV = (DIRTY_FLAG_TFX_TEXTURE_0 << 6),
 
 		DIRTY_FLAG_TFX_TEXTURES = DIRTY_FLAG_TFX_TEXTURE_TEX | DIRTY_FLAG_TFX_TEXTURE_PALETTE |
 		                          DIRTY_FLAG_TFX_TEXTURE_RT | DIRTY_FLAG_TFX_TEXTURE_PRIMID |
-		                          DIRTY_FLAG_TFX_TEXTURE_DEPTH,
+		                          DIRTY_FLAG_TFX_TEXTURE_DEPTH | DIRTY_FLAG_TFX_TEXTURE_RT_ROV |
+		                          DIRTY_FLAG_TFX_TEXTURE_DEPTH_ROV,
 
 		DIRTY_BASE_STATE = DIRTY_FLAG_INDEX_BUFFER | DIRTY_FLAG_PIPELINE | DIRTY_FLAG_VIEWPORT | DIRTY_FLAG_SCISSOR |
 		                   DIRTY_FLAG_BLEND_CONSTANTS | DIRTY_FLAG_LINE_WIDTH,
@@ -689,14 +751,11 @@ private:
 
 	// Which bindings/state has to be updated before the next draw.
 	u32 m_dirty_flags = 0;
-	FeedbackLoopFlag m_current_framebuffer_feedback_loop = FeedbackLoopFlag_None;
 	bool m_warned_slow_spin = false;
 
 	VkBuffer m_index_buffer = VK_NULL_HANDLE;
 
-	GSTextureVK* m_current_render_target = nullptr;
-	GSTextureVK* m_current_depth_target = nullptr;
-	VkFramebuffer m_current_framebuffer = VK_NULL_HANDLE;
+	FramebufferInfo m_current_framebuffer;
 	VkRenderPass m_current_render_pass = VK_NULL_HANDLE;
 	GSVector4i m_current_render_pass_area = GSVector4i::zero();
 
@@ -705,7 +764,7 @@ private:
 	float m_current_line_width = 1.0f;
 	u8 m_blend_constant_color = 0;
 
-	std::array<const GSTextureVK*, NUM_TFX_TEXTURES> m_tfx_textures{};
+	std::array<GSTextureVK*, NUM_TFX_TEXTURES> m_tfx_textures{};
 	VkSampler m_tfx_sampler = VK_NULL_HANDLE;
 	u32 m_tfx_sampler_sel = 0;
 	VkDescriptorSet m_tfx_ubo_descriptor_set = VK_NULL_HANDLE;
@@ -721,6 +780,7 @@ private:
 	VkPipeline m_current_pipeline = VK_NULL_HANDLE;
 
 	std::unique_ptr<GSTextureVK> m_null_texture;
+	VkFramebuffer m_null_framebuffer;
 
 	// current pipeline selector - we save this in the struct to avoid re-zeroing it every draw
 	PipelineSelector m_pipeline_selector = {};

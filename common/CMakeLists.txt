@@ -42,6 +42,7 @@ target_sources(common PRIVATE
 	Assertions.h
 	boost_spsc_queue.hpp
 	BitUtils.h
+	Buffer.h
 	ByteSwap.h
 	Console.h
 	CrashHandler.h
@@ -64,6 +65,8 @@ target_sources(common PRIVATE
 	MD5Digest.h
 	MRCHelpers.h
 	Path.h
+	Pcsx2Defs.h
+	Pcsx2Types.h
 	PrecompiledHeader.h
 	ProgressCallback.h
 	ReadbackSpinManager.h
@@ -83,6 +86,7 @@ target_sources(common PRIVATE
 	WindowInfo.h
 	WrappedMemCopy.h
 	YAML.h
+	ZipHelpers.h
 )
 
 if(ARCH_X86)
@@ -126,9 +130,7 @@ if(ARCH_X86)
 endif()
 
 if(WIN32)
-	enable_language(ASM_MASM)
 	target_sources(common PRIVATE
-		FastJmp.asm
 		HTTPDownloaderWinHTTP.cpp
 		HTTPDownloaderWinHTTP.h
 		StackWalker.cpp
@@ -137,6 +139,16 @@ if(WIN32)
 		Windows/WinHostSys.cpp
 		Windows/WinMisc.cpp
 	)
+
+	if (ARCH_X86)
+		enable_language(ASM_MASM)
+		target_sources(common PRIVATE FastJmp.asm)
+	elseif (ARCH_ARM64)
+		enable_language(ASM_MARMASM)
+		target_sources(common PRIVATE FastJmp_arm64.asm)
+		set_property(SOURCE FastJmp_arm64.asm PROPERTY VS_SETTINGS "PreprocessWithCl=false")
+	endif()
+
 	target_link_libraries(common PUBLIC
 		WIL::WIL
 		winmm

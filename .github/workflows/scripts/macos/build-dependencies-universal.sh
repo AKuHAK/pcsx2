@@ -43,28 +43,29 @@ if [ "${INSTALLDIR:0:1}" != "/" ]; then
 	INSTALLDIR="$PWD/$INSTALLDIR"
 fi
 
-QT=6.11.0
+QT=6.11.2
 QTAPNG=1.3.0
 
 FREETYPE=2.14.3
-SDL=SDL3-3.4.8
-HARFBUZZ=14.0.0
+SDLMINOR=3.4.20
+SDL=SDL3-$SDLMINOR
+HARFBUZZ=14.2.0
 ZSTD=1.5.7
 LZ4=1.10.0
-LIBPNG=1.6.56
-LIBJPEGTURBO=3.1.4.1
+LIBPNG=1.6.58
+LIBJPEGTURBO=3.2.0
 LIBWEBP=1.6.0
-FFMPEG=8.1
+FFMPEG=9.0.1
 MOLTENVK=1.4.1
-KDDOCKWIDGETS=2.4.0
-PLUTOVG=1.3.2
-PLUTOSVG=0.0.7
-RAPIDYAML=0.11.1
+KDDOCKWIDGETS=2.4.1
+PLUTOVG=1.3.3
+PLUTOSVG=0.0.8
+RAPIDYAML=0.12.1
 
-SHADERC=2026.1
-SHADERC_GLSLANG=f0bd0257c308b9a26562c1a30c4748a0219cc951
-SHADERC_SPIRVHEADERS=04f10f650d514df88b76d25e83db360142c7b174
-SHADERC_SPIRVTOOLS=fbe4f3ad913c44fe8700545f8ffe35d1382b7093
+SHADERC=2026.2
+SHADERC_GLSLANG=275822a6261ee689aadb1da5f09a0ec2f058685c
+SHADERC_SPIRVHEADERS=58006c901d1d5c37dece6b6610e9af87fa951375
+SHADERC_SPIRVTOOLS=6337eb62cadd7d124ac6789bf39c0f71148f0a73
 
 mkdir -p deps-build
 cd deps-build
@@ -85,40 +86,40 @@ CMAKE_ARCH_ARM64=-DCMAKE_OSX_ARCHITECTURES="arm64"
 CMAKE_ARCH_UNIVERSAL=-DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"
 
 grep . > SHASUMS <<EOF
-231ad85979864d914dc9568a1b71c91d6cf20d7b2021d059103bf0eb51cb755e  qtbase-everywhere-src-$QT.tar.xz
-d3adb02ac5e2fe24068dbdaee0d7cc68cc3fa8553291c1bfce77c9fe8e940cc8  qtimageformats-everywhere-src-$QT.tar.xz
-dfa8d653be07087d9407ed4a4ebae847f8953e0b7abd829f089803ab652a30e6  qtsvg-everywhere-src-$QT.tar.xz
-cfb1993d7a10848965b01b9cf33a54b8a4ba4e5e3a6d28d59483e73f10d9fc76  qttools-everywhere-src-$QT.tar.xz
-54f48b2fe4316892ff930195f170a5385644acc7393505f3155c066b8e1ffe56  qttranslations-everywhere-src-$QT.tar.xz
+5b2e00eccaf5a4d8c14134ffa0ea8dfd0a35ae1ffc7f8d87fa4305a1ed23cf22  qtbase-everywhere-src-$QT.tar.xz
+cecd8900f34b6550076309bc94f62f828008b633a4239e0a08c86788f41001f8  qtimageformats-everywhere-src-$QT.tar.xz
+d594337feca84c26fb67fe87b85e6a5c12fda404b611d905f9d138210c311876  qtsvg-everywhere-src-$QT.tar.xz
+9ea75af35c512f7e09e61c8c3af3997f13b4d43bb099cf43fcec470126b4041e  qttools-everywhere-src-$QT.tar.xz
+021684c1a7937a9fabc3b056a6698ad5978794caf9ac190fd6cc11399e67c014  qttranslations-everywhere-src-$QT.tar.xz
 f1d3be3489f758efe1a8f12118a212febbe611aa670af32e0159fa3c1feab2a6  QtApng-$QTAPNG.tar.gz
 
 36bc4f1cc413335368ee656c42afca65c5a3987e8768cc28cf11ba775e785a5f  freetype-$FREETYPE.tar.xz
-e9fff7467fb60f037e6708da18b25560649e4c63edc2a69bb871b960d9cbfbba  $SDL.tar.gz
-f29db9470e0ca5cef484e04e27baeec233aa428e8fdabe9e51b0f706c0809d24  harfbuzz-$HARFBUZZ.tar.gz
+f3bb06f55bed9557227a700af2ea62e49497ebdf58037732a731a5fb3ef8581f  $SDL.tar.gz
+c652d5d94971031654ab3989891a490a895d3e3f2b71171c62692b28e94b1b93  harfbuzz-$HARFBUZZ.tar.gz
 eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3  zstd-$ZSTD.tar.gz
 537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b  lz4-$LZ4.tar.gz
-f7d8bf1601b7804f583a254ab343a6549ca6cf27d255c302c47af2d9d36a6f18  libpng-$LIBPNG.tar.xz
+28eb403f51f0f7405249132cecfe82ea5c0ef97f1b32c5a65828814ae0d34775  libpng-$LIBPNG.tar.xz
 e4ab7009bf0629fd11982d4c2aa83964cf244cffba7347ecd39019a9e38c4564  libwebp-$LIBWEBP.tar.gz
-9ce32d4a2763a2ac5f258726ba2f49e9011327c1ee8c30862a32d0f30889fbe8  libpng-$LIBPNG-apng.patch.gz
-ecae8008e2cc9ade2f2c1bb9d5e6d4fb73e7c433866a056bd82980741571a022  libjpeg-turbo-$LIBJPEGTURBO.tar.gz
-b072aed6871998cce9b36e7774033105ca29e33632be5b6347f3206898e0756a  ffmpeg-$FFMPEG.tar.xz
+eee7dea22ed502868017971c86c63c4ed1e6085de0baebfdcc3d3322f00f3eb0  libpng-$LIBPNG-apng.patch.gz
+6f30092cef9fb839779646608f4ee14ae3cbac989c47fa05e841b0841f09878e  libjpeg-turbo-$LIBJPEGTURBO.tar.gz
+cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635  ffmpeg-$FFMPEG.tar.xz
 9985f141902a17de818e264d17c1ce334b748e499ee02fcb4703e4dc0038f89c  MoltenVK-$MOLTENVK.tar.gz
-51dbf24fe72e43dd7cb9a289d3cab47112010f1a2ed69b6fc8ac0dff31991ed2  KDDockWidgets-$KDDOCKWIDGETS.tar.gz
-7bd4e79ce18b1d47517e7e91fbb7cf19d4f01942804a519bc7c0bf32b6325dd5  plutovg-$PLUTOVG.tar.gz
-78561b571ac224030cdc450ca2986b4de915c2ba7616004a6d71a379bffd15f3  plutosvg-$PLUTOSVG.tar.gz
-9d9938269adc25e9a9b84650338b87d130cf469d82685fffc028c325279619c1  rapidyaml-$RAPIDYAML-src.tgz
+5cd9495d9316cf6cc937bb328a7fd491c3248ef2469cfa42511f1039f6148aca  KDDockWidgets-$KDDOCKWIDGETS.tar.gz
+2b0d17a6e016f47b86f9c00e2cb82600041b1ea1f7d2a00c2d46ae542cbfed3c  plutovg-$PLUTOVG.tar.gz
+49d5cfe772d3aa10cd4879f2f6e189f5083c08e4c8ea01bf3d5b87c97dfca7d2  plutosvg-$PLUTOSVG.tar.gz
+e9efcdd17f86287748793cf21d106e461fcad8d103a3e5a23632afe93828660d  rapidyaml-$RAPIDYAML-src.tgz
 
-245002feccbe7f8361b223545a5654cea69780745886872d7efff50a38d96c66  shaderc-$SHADERC.tar.gz
-bd58dca4dac67dcf7640292d7d63e0416274d40ee2200f7301878cec11ac6647  shaderc-glslang-$SHADERC_GLSLANG.tar.gz
-1b220e3eec1714f0451b0e3652979bd280edf10893f617837b88e6359a804ded  shaderc-spirv-headers-$SHADERC_SPIRVHEADERS.tar.gz
-cabb35f4eef0da3ef72ad9edd596af4191d7507a8f35c05df526d2d5ff889f59  shaderc-spirv-tools-$SHADERC_SPIRVTOOLS.tar.gz
+f924178e75e3293082481b25ed64d5e48a795b479dac3bd3c83d23070855df42  shaderc-$SHADERC.tar.gz
+971848a1cc639ce8dc244e778b17efe0f690e32ac398a75e31d1c67ad06d3e0a  shaderc-glslang-$SHADERC_GLSLANG.tar.gz
+a6cb1b300bb8171795e116457e858e555334749f9cacaed8068ae0ef8681110c  shaderc-spirv-headers-$SHADERC_SPIRVHEADERS.tar.gz
+e156be0bd81c8812f1bff8e520422bfa9df61b3045587b9eb483185f1074a7b2  shaderc-spirv-tools-$SHADERC_SPIRVTOOLS.tar.gz
 EOF
 
 if ! shasum -sa 256 --check SHASUMS 2> /dev/null; then
 	curl -L \
 		-O "https://sourceforge.net/projects/freetype/files/freetype2/$FREETYPE/freetype-$FREETYPE.tar.xz" \
 		-O "https://github.com/harfbuzz/harfbuzz/archive/$HARFBUZZ/harfbuzz-$HARFBUZZ.tar.gz" \
-		-O "https://libsdl.org/release/$SDL.tar.gz" \
+		-O "https://github.com/libsdl-org/SDL/releases/download/release-$SDLMINOR/$SDL.tar.gz" \
 		-O "https://github.com/facebook/zstd/releases/download/v$ZSTD/zstd-$ZSTD.tar.gz" \
 		-O "https://github.com/lz4/lz4/releases/download/v$LZ4/lz4-$LZ4.tar.gz" \
 		-O "https://downloads.sourceforge.net/project/libpng/libpng16/$LIBPNG/libpng-$LIBPNG.tar.xz" \
@@ -262,8 +263,8 @@ rm -fr "freetype-$FREETYPE"
 tar xf "freetype-$FREETYPE.tar.xz"
 cd "freetype-$FREETYPE"
 cmake "${CMAKE_COMMON[@]}" "$CMAKE_ARCH_UNIVERSAL" -DBUILD_SHARED_LIBS=ON -DFT_REQUIRE_ZLIB=ON -DFT_REQUIRE_PNG=ON -DFT_DISABLE_BZIP2=TRUE -DFT_DISABLE_BROTLI=TRUE -DFT_DISABLE_HARFBUZZ=TRUE -B build
-cmake --build build --parallel
-cmake --install build
+make -C build "-j$NPROCS"
+make -C build install
 cd ..
 
 echo "Building HarfBuzz..."
@@ -271,8 +272,8 @@ rm -fr "harfbuzz-$HARFBUZZ"
 tar xf "harfbuzz-$HARFBUZZ.tar.gz"
 cd "harfbuzz-$HARFBUZZ"
 cmake "${CMAKE_COMMON[@]}" "$CMAKE_ARCH_UNIVERSAL" -DBUILD_SHARED_LIBS=ON -DHB_BUILD_UTILS=OFF -DHB_BUILD_GPU=OFF -B build
-cmake --build build --parallel
-cmake --install build
+make -C build "-j$NPROCS"
+make -C build install
 cd ..
 
 echo "Building FreeType with HarfBuzz..."
@@ -280,18 +281,22 @@ rm -fr "freetype-$FREETYPE"
 tar xf "freetype-$FREETYPE.tar.xz"
 cd "freetype-$FREETYPE"
 cmake "${CMAKE_COMMON[@]}" "$CMAKE_ARCH_UNIVERSAL" -DBUILD_SHARED_LIBS=ON -DFT_REQUIRE_ZLIB=ON -DFT_REQUIRE_PNG=ON -DFT_DISABLE_BZIP2=TRUE -DFT_DISABLE_BROTLI=TRUE -DFT_REQUIRE_HARFBUZZ=TRUE -B build
-cmake --build build --parallel
-cmake --install build
+make -C build "-j$NPROCS"
+make -C build install
 cd ..
 
-# MoltenVK already builds universal binaries, nothing special to do here.
 echo "Installing MoltenVK..."
 rm -fr "MoltenVK-${MOLTENVK}"
 tar xf "MoltenVK-$MOLTENVK.tar.gz"
 cd "MoltenVK-${MOLTENVK}"
-./fetchDependencies --macos
-make macos MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=0 MVK_CONFIG_USE_METAL_PRIVATE_API=1
-cp Package/Latest/MoltenVK/dynamic/dylib/macOS/libMoltenVK.dylib "$INSTALLDIR/lib/"
+patch -p1 < "$SCRIPTDIR/4cf93f0f16b1503580cdb7ffdedb056321446677.patch"
+patch -p1 < "$SCRIPTDIR/mvk-texture-swizzle.patch"
+MVKWARNFLAGS="-Wno-unguarded-availability-new"
+MVKBUILDFLAGS="$CXXFLAGS $MVKWARNFLAGS -DMVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=0 -DMVK_CONFIG_USE_METAL_PRIVATE_API=1"
+CXXFLAGS="$MVKBUILDFLAGS" OBJCXXFLAGS="$MVKBUILDFLAGS" CFLAGS="$CFLAGS $MVKWARNFLAGS" \
+	cmake "${CMAKE_COMMON[@]}" "$CMAKE_ARCH_UNIVERSAL" -DMVK_EXCLUDE_SPIRV_TOOLS=ON -B build
+make -C build "-j$NPROCS"
+cp build/MoltenVK/libMoltenVK.dylib "$INSTALLDIR/lib/"
 cd ..
 
 echo "Installing Qt Base..."
@@ -301,8 +306,6 @@ cd "qtbase-everywhere-src-$QT"
 
 # Patch Qt to support macOS 11
 patch -p1 < "$SCRIPTDIR/qt-macos11compat.patch"
-# Backport fix build on Xcode 26.4 (https://codereview.qt-project.org/c/qt/qtbase/+/724619)
-patch -p1 < "$SCRIPTDIR/qt110-xcode264.patch"
 
 # since we don't have a direct reference to QtSvg, it doesn't deployed directly from the main binary
 # (only indirectly from iconengines), and the libqsvg.dylib imageformat plugin does not get deployed.
@@ -328,7 +331,7 @@ patch -u src/tools/macdeployqt/shared/shared.cpp <<EOF
  
      // Platforminputcontext plugins if QtGui is in use
 EOF
-cmake -B build "${CMAKE_COMMON[@]}" "$CMAKE_ARCH_UNIVERSAL" -DFEATURE_dbus=OFF -DFEATURE_framework=OFF -DFEATURE_icu=OFF -DFEATURE_opengl=OFF -DFEATURE_printsupport=OFF -DFEATURE_sql=OFF -DFEATURE_gssapi=OFF -DFEATURE_system_png=ON -DFEATURE_system_jpeg=ON -DFEATURE_system_zlib=ON -DFEATURE_system_freetype=ON -DFEATURE_system_harfbuzz=ON
+cmake -B build "${CMAKE_COMMON[@]}" "$CMAKE_ARCH_UNIVERSAL" -DFEATURE_dup3=OFF -DFEATURE_dbus=OFF -DFEATURE_framework=OFF -DFEATURE_icu=OFF -DFEATURE_opengl=OFF -DFEATURE_printsupport=OFF -DFEATURE_sql=OFF -DFEATURE_gssapi=OFF -DFEATURE_system_png=ON -DFEATURE_system_jpeg=ON -DFEATURE_system_zlib=ON -DFEATURE_system_freetype=ON -DFEATURE_system_harfbuzz=ON
 make -C build "-j$NPROCS"
 make -C build install
 cd ..

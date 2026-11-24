@@ -135,12 +135,13 @@ protected:
 	int  m_used_buffers_idx = 0;
 	int m_current_buffer_idx = 0;
 	bool m_recent_buffer_switch = false;
+	u32 m_max_vertex_count;
 
 	struct GSVertexBuff
 	{
 		GSVertex* buff;
 		GSVertex* buff_copy; // same size buffer to copy/modify the original buffer
-		u32 head, tail, next, maxcount; // head: first vertex, tail: last vertex + 1, next: last indexed + 1
+		u32 head, tail, next; // head: first vertex, tail: last vertex + 1, next: last indexed + 1
 		u32 xy_tail;
 		GSVector4i xy[4];
 		GSVector4i xyhead;
@@ -268,6 +269,7 @@ public:
 		u64 draw;
 		GSVector4i rect;
 		EEGS_TransferType transfer_type;
+		bool was_hardware_only;
 	};
 
 	enum NoGapsType
@@ -317,9 +319,11 @@ public:
 	static u64 s_last_transfer_draw_n;
 	static u64 s_transfer_n;
 
-	GSPerfMon m_perfmon_frame; // Track stat across a frame.
-	GSPerfMon m_perfmon_draw;  // Track stat across a draw.
-
+	GSPerfMon m_perfmon_frame; // Track stats across a frame.
+	GSPerfMon m_perfmon_draw;  // Track stats across a draw.
+	
+	void IncDraw();
+	
 	static constexpr u32 STATE_VERSION = 9;
 
 	#define PRIM_REG_MASK 0x7FF
@@ -506,7 +510,7 @@ public:
 
 	virtual void Move();
 
-	GSVector4i GetTEX0Rect(GSDrawingContext prev_ctx);
+	GSVector4i GetTEX0Rect(const GSDrawingContext& prev_ctx);
 	void CheckWriteOverlap(bool req_write, bool req_read);
 	void Write(const u8* mem, int len);
 	void Read(u8* mem, int len);
@@ -532,12 +536,17 @@ public:
 	bool TrianglesAreQuadsImpl();
 	bool TrianglesAreQuads(bool shuffle_check = false);
 	template <u32 primclass>
-	PRIM_OVERLAP GetPrimitiveOverlapDrawlistImpl(bool save_drawlist = false, bool save_bbox = false, float bbox_scale = 1.0f);
-	PRIM_OVERLAP GetPrimitiveOverlapDrawlist(bool save_drawlist = false, bool save_bbox = false, float bbox_scale = 1.0f);
+	PRIM_OVERLAP GetPrimitiveOverlapDrawlistImpl(bool save_drawlist = false, bool save_bbox = false,
+		float bbox_scale = 1.0f, u32* max_size = nullptr);
+	PRIM_OVERLAP GetPrimitiveOverlapDrawlist(bool save_drawlist = false, bool save_bbox = false,
+		float bbox_scale = 1.0f, u32* max_size = nullptr);
 	PRIM_OVERLAP PrimitiveOverlap(bool save_drawlist = false);
 	bool SpriteDrawWithoutGaps();
 	void CalculatePrimitiveCoversWithoutGaps();
 	GIFRegTEX0 GetTex0Layer(u32 lod);
+	template <u32 primclass>
+	void RewriteVerticesIfLargeSTImpl(const GSVector4& large_val, bool check_clamp_mode);
+	void RewriteVerticesIfLargeST(const GSVector4& large_val, bool check_clamp_mode);
 };
 
 // We put this in the header because of Multi-ISA.

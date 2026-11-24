@@ -14,6 +14,7 @@
 #include "GS.h"
 #include "GS/Renderers/HW/GSTextureReplacements.h"
 #include "GSDumpReplayer.h"
+#include "GS/GSCapture.h"
 #include "GameDatabase.h"
 #include "GameList.h"
 #include "Host.h"
@@ -64,6 +65,7 @@
 #include <atomic>
 #include <mutex>
 #include <sstream>
+#include <common/RedtapeWilCom.h>
 
 #ifdef _WIN32
 #include "common/RedtapeWindows.h"
@@ -171,6 +173,7 @@ static std::string s_disc_version;
 static std::string s_title;
 static std::string s_title_en_search;
 static std::string s_title_en_replace;
+static std::string s_cur_region;
 static u32 s_disc_crc;
 static u32 s_current_crc;
 static u32 s_elf_entry_point = 0xFFFFFFFFu;
@@ -178,6 +181,7 @@ static std::string s_elf_path;
 static std::pair<u32, u32> s_elf_text_range;
 static bool s_elf_executed = false;
 static std::string s_elf_override;
+static std::string s_game_settings_override;
 static std::string s_input_profile_name;
 static u32 s_frame_advance_count = 0;
 static bool s_fast_boot_requested = false;
@@ -300,6 +304,7 @@ void VMManager::SetState(VMState state)
 		}
 		else
 		{
+			FullscreenUI::OnVMResumed();
 			Host::OnVMResumed();
 			ResetResumeTimestamp();
 		}
@@ -666,7 +671,12 @@ void VMManager::LoadCoreSettings(SettingsInterface& si)
 
 	// Force MTVU off when playing back GS dumps, it doesn't get used.
 	if (GSDumpReplayer::IsReplayingDump())
+	{
 		EmuConfig.Speedhacks.vuThread = false;
+		GSDumpReplayer::SetFrameRange(EmuConfig.GS.DumpReplayUseFrameRange,
+			EmuConfig.GS.DumpReplayFrameStart, EmuConfig.GS.DumpReplayFrameEnd);
+		GSDumpReplayer::SetLoopCount(EmuConfig.GS.DumpReplayLoopCount);
+	}
 }
 
 void VMManager::LoadInputBindings(SettingsInterface& si, std::unique_lock<std::mutex>& lock)
@@ -812,6 +822,10 @@ bool VMManager::ReloadGameSettings()
 
 std::string VMManager::GetGameSettingsPath(const std::string_view game_serial, u32 game_crc)
 {
+	// Game settings override via -gamecfg command line flag
+	if (!s_game_settings_override.empty())
+		return s_game_settings_override;
+
 	std::string sanitized_serial(Path::SanitizeFileName(game_serial));
 
 	return game_serial.empty() ?
@@ -839,6 +853,13 @@ std::string VMManager::GetDiscOverrideFromGameSettings(const std::string& elf_pa
 	}
 
 	return iso_path;
+}
+
+bool VMManager::AreGameSettingsPresent(const std::string_view game_serial, u32 game_crc) {
+	std::string filename(VMManager::GetGameSettingsPath(game_serial, game_crc));
+	if (!FileSystem::FileExists(filename.c_str()))
+		filename = VMManager::GetGameSettingsPath({}, game_crc);
+	return FileSystem::FileExists(filename.c_str());
 }
 
 std::string VMManager::GetInputProfilePath(const std::string_view name)
@@ -1052,11 +1073,12 @@ void VMManager::UpdateDiscDetails(bool booting)
 			s_disc_crc = GSDumpReplayer::GetDumpCRC();
 			s_disc_elf = {};
 			s_disc_version = {};
+			s_cur_region = "NTSC";
 			serial_is_valid = !s_disc_serial.empty();
 		}
 		else if (CDVDsys_GetSourceType() != CDVD_SourceType::NoDisc)
 		{
-			cdvdGetDiscInfo(&s_disc_serial, &s_disc_elf, &s_disc_version, &s_disc_crc, nullptr);
+			cdvdGetDiscInfo(&s_disc_serial, &s_disc_elf, &s_disc_version, &s_cur_region, &s_disc_crc, nullptr);
 			serial_is_valid = !s_disc_serial.empty();
 		}
 		else if (!s_elf_override.empty())
@@ -1064,12 +1086,14 @@ void VMManager::UpdateDiscDetails(bool booting)
 			s_disc_serial = Path::GetFileTitle(s_elf_override);
 			s_disc_version = {};
 			s_disc_crc = 0; // set below
+			s_cur_region = "NTSC";
 		}
 		else
 		{
 			s_disc_serial = BiosSerial;
 			s_disc_version = {};
 			s_disc_crc = 0;
+			s_cur_region = (BiosZone == "Europe") ? "PAL" : "NTSC";
 			title = fmt::format(TRANSLATE_FS("VMManager", "PS2 BIOS ({})"), BiosZone);
 		}
 
@@ -1365,6 +1389,7 @@ VMBootResult VMManager::Initialize(const VMBootParameters& boot_params, Error* e
 			GSDumpReplayer::Shutdown();
 
 		s_elf_override = {};
+		s_game_settings_override = {};
 		ClearELFInfo();
 		ClearDiscDetails();
 
@@ -1464,6 +1489,23 @@ VMBootResult VMManager::Initialize(const VMBootParameters& boot_params, Error* e
 		return VMBootResult::StartupFailure;
 	}
 	ScopedGuard close_cdvd(&DoCDVDclose);
+
+	if (!boot_params.game_config.empty())
+	{
+		if (!StringUtil::compareNoCase(Path::GetExtension(boot_params.game_config), "ini"))
+		{
+			Error::SetStringFmt(error,
+				TRANSLATE_FS("VMManager", "Requested game config '{}' is not an INI file."), boot_params.game_config);
+			return VMBootResult::StartupFailure;
+		}
+		else if (!FileSystem::FileExists(boot_params.game_config.c_str()))
+		{
+			Error::SetStringFmt(error,
+				TRANSLATE_FS("VMManager", "Requested game config '{}' does not exist."), boot_params.game_config);
+			return VMBootResult::StartupFailure;
+		}
+		s_game_settings_override = boot_params.game_config;
+	}
 
 	// Figure out which game we're running! This also loads game settings.
 	UpdateDiscDetails(true);
@@ -1647,6 +1689,7 @@ VMBootResult VMManager::Initialize(const VMBootParameters& boot_params, Error* e
 	}
 
 	PerformanceMetrics::Clear();
+	MTGS::ResetStats();
 	return VMBootResult::StartupSuccess;
 }
 
@@ -1681,6 +1724,7 @@ void VMManager::Shutdown(bool save_resume_state)
 
 	SaveSessionTime(s_disc_serial);
 	s_elf_override = {};
+	s_game_settings_override = {};
 	ClearELFInfo();
 	CDVDsys_ClearFiles();
 
@@ -1902,7 +1946,7 @@ bool VMManager::DoLoadState(const char* filename, Error* error)
 		Error::SetString(error, TRANSLATE_STR("VMManager", "Cannot load state while replaying a GS dump."));
 		return false;
 	}
-
+	GSCapture::FlushAudioOnly();
 	Host::OnSaveStateLoading(filename);
 
 	if (!SaveState_UnzipFromDisk(filename, error))
@@ -2270,14 +2314,14 @@ void VMManager::ResetFrameLimiter()
 	s_limiter_frame_start = GetCPUTicks();
 }
 
-void VMManager::Internal::Throttle()
+void VMManager::Internal::Throttle(bool vsync_start)
 {
 	if (s_target_speed == 0.0f || s_use_vsync_for_timing)
 		return;
 
 	const u64 uExpectedEnd =
 		s_limiter_frame_start +
-		s_limiter_ticks_per_frame; // Compute when we would expect this frame to end, assuming everything goes perfectly perfect.
+		(vsync_start ? (s_limiter_ticks_per_frame * 0.9) : s_limiter_ticks_per_frame); // Compute when we would expect this frame to end, assuming everything goes perfectly perfect.
 	const u64 iEnd = GetCPUTicks(); // The current tick we actually stopped on.
 	const s64 sDeltaTime = iEnd - uExpectedEnd; // The diff between when we stopped and when we expected to.
 
@@ -2306,8 +2350,11 @@ void VMManager::Internal::Throttle()
 	{
 	}
 
-	// Finally, set our next frame start to when this one ends
-	s_limiter_frame_start = uExpectedEnd;
+	if (!vsync_start)
+	{
+		// Finally, set our next frame start to when this one ends
+		s_limiter_frame_start = uExpectedEnd;
+	}
 }
 
 void VMManager::Internal::FrameRateChanged()
@@ -2497,13 +2544,13 @@ void LogGPUCapabilities()
 {
 	Console.WriteLn(Color_StrongBlack, "Graphics Adapters Detected:");
 #if defined(_WIN32)
-	IDXGIFactory1* pFactory = nullptr;
-	if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&pFactory)))
+	wil::com_ptr_nothrow<IDXGIFactory1> pFactory;
+	if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(pFactory.put()))))
 		return;
 
 	UINT i = 0;
-	IDXGIAdapter* pAdapter = nullptr;
-	while (pFactory->EnumAdapters(i, &pAdapter) != DXGI_ERROR_NOT_FOUND)
+	wil::com_ptr_nothrow<IDXGIAdapter> pAdapter;
+	while (pFactory->EnumAdapters(i, pAdapter.put()) != DXGI_ERROR_NOT_FOUND)
 	{
 		DXGI_ADAPTER_DESC desc;
 		LARGE_INTEGER umdver;
@@ -2519,21 +2566,12 @@ void LogGPUCapabilities()
 				umdver.QuadPart & 0xFFFF);
 
 			i++;
-			pAdapter->Release();
-			pAdapter = nullptr;
 		}
 		else
 		{
-			pAdapter->Release();
-			pAdapter = nullptr;
-
 			break;
 		}
 	}
-
-	if (pAdapter)
-		pAdapter->Release();
-	pFactory->Release();
 #else
 	// Credits to neofetch for the following (modified) script
 	std::string gpu_script = R"gpu_script(
@@ -2827,6 +2865,11 @@ bool VMManager::Internal::WasFastBooted()
 bool VMManager::Internal::IsFastBootInProgress()
 {
 	return s_fast_boot_requested && !HasBootedELF();
+}
+
+std::string VMManager::Internal::GetCurrentRegion()
+{
+	return s_cur_region;
 }
 
 void VMManager::Internal::DisableFastBoot()
@@ -3256,7 +3299,7 @@ void VMManager::WarnAboutUnsafeSettings()
 			append(ICON_FA_PAINTBRUSH,
 				TRANSLATE_SV("VMManager", "Blending Accuracy is below Basic, this may break effects in some games."));
 		}
-		if (EmuConfig.GS.HWDownloadMode != GSHardwareDownloadMode::Enabled)
+		if (EmuConfig.GS.HWDownloadMode > GSHardwareDownloadMode::EnabledForceFull)
 		{
 			append(ICON_FA_DOWNLOAD,
 				TRANSLATE_SV("VMManager", "Hardware Download Mode is not set to Accurate, this may break rendering in some games."));
@@ -3280,6 +3323,11 @@ void VMManager::WarnAboutUnsafeSettings()
 		{
 			append(ICON_FA_CIRCLE_EXCLAMATION,
 				TRANSLATE_SV("VMManager", "Draw Buffering is enabled, this may result in graphical errors."));
+		}
+		if (EmuConfig.GS.UserHacks_RewriteLargeSTCoords)
+		{
+			append(ICON_FA_CIRCLE_EXCLAMATION,
+				TRANSLATE_SV("VMManager", "Rewrite large ST is enabled, this may reduce performance."));
 		}
 		if (EmuConfig.GS.DumpReplaceableTextures)
 		{
@@ -3811,7 +3859,10 @@ void VMManager::UpdateDiscordPresence(bool update_session_time)
 	if (rp_title.empty())
 		rp.details = TRANSLATE("VMManager", "No Game Running");
 	else
+	{
 		rp.details = rp_title.c_str();
+		rp.status_display_type = DiscordStatusDisplayType_Details;
+	}
 
 	std::string state_string;
 
