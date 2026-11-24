@@ -597,19 +597,16 @@ static __ri void vtlb_Modified(u32 addr)
 
 // These pages are mapped vaddr->vaddr so the handler is given the virtual
 // address, which the exception needs; the physical side is resolved here.
-static void* vtlb_WriteProtectedSource(u32 vaddr)
+static bool vtlb_WriteProtectedPAddr(u32 vaddr, u32* out_paddr)
 {
 	if (s_execPAddr)
 	{
 		const u32 pbase = s_execPAddr[vaddr >> VTLB_PAGE_BITS];
 		if (pbase == 0xFFFFFFFFu)
-			return nullptr;
+			return false;
 
-		const u32 paddr = pbase | (vaddr & VTLB_PAGE_MASK);
-		if (!eeMem || (paddr + 16) > Ps2MemSize::ExposedRam)
-			return nullptr;
-
-		return &eeMem->Main[paddr];
+		*out_paddr = pbase | (vaddr & VTLB_PAGE_MASK);
+		return true;
 	}
 	for (int i = 0; i < 48; i++)
 	{
@@ -624,29 +621,46 @@ static void* vtlb_WriteProtectedSource(u32 vaddr)
 		const bool odd = (vaddr - base) >= pageSize;
 		const EntryLo_t& lo = odd ? tlb[i].EntryLo1 : tlb[i].EntryLo0;
 		if (!lo.V)
-			return nullptr;
+			return false;
 
-		const u32 paddr = (odd ? tlb[i].PFN1() : tlb[i].PFN0()) + ((vaddr - base) & (pageSize - 1));
-		if (!eeMem || (paddr + 16) > Ps2MemSize::ExposedRam)
-			return nullptr;
-
-		return &eeMem->Main[paddr];
+		*out_paddr = (odd ? tlb[i].PFN1() : tlb[i].PFN0()) + ((vaddr - base) & (pageSize - 1));
+		return true;
 	}
-	return nullptr;
+	return false;
 }
 
+// Reads of a write-protected page go to whatever is at the physical address.
+// Besides RAM this is hardware: the BIOS maps the EE registers at 0x10000000
+// with D clear so user mode can read them (ps2sdk reads T2_MODE there) but not
+// write them. Anything below 512 MB is reached through the kseg1 window, which
+// maps it 1:1 to the physical handlers.
 template <typename OperandType>
 static OperandType vtlbWriteProtReadSm(u32 addr)
 {
-	OperandType value = 0;
-	if (const void* src = vtlb_WriteProtectedSource(addr))
-		std::memcpy(&value, src, sizeof(OperandType));
-	return value;
+	u32 paddr;
+	if (!vtlb_WriteProtectedPAddr(addr, &paddr))
+		return 0;
+
+	if (eeMem && (paddr + sizeof(OperandType)) <= Ps2MemSize::ExposedRam)
+	{
+		OperandType value;
+		std::memcpy(&value, &eeMem->Main[paddr], sizeof(OperandType));
+		return value;
+	}
+	if (paddr < 0x20000000u)
+		return vtlb_memRead<OperandType>(0xA0000000u | paddr);
+	return 0;
 }
 static RETURNS_R128 vtlbWriteProtReadLg(u32 addr)
 {
-	if (const void* src = vtlb_WriteProtectedSource(addr))
-		return r128_load(src);
+	u32 paddr;
+	if (!vtlb_WriteProtectedPAddr(addr, &paddr))
+		return r128_zero();
+
+	if (eeMem && (paddr + 16) <= Ps2MemSize::ExposedRam)
+		return r128_load(&eeMem->Main[paddr]);
+	if (paddr < 0x20000000u)
+		return vtlb_memRead128(0xA0000000u | paddr);
 	return r128_zero();
 }
 
