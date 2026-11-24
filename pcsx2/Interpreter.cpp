@@ -154,6 +154,146 @@ void intCheckMemcheck()
 	}
 }
 
+// --------------------------------------------------------------------------------------
+//  Fast interpreter mode
+// --------------------------------------------------------------------------------------
+// Used when the EE recompiler is requested on a host without one (ARM64). It keeps the
+// interpreter's semantics but drops per-instruction overhead:
+//  - instruction fetch reads straight from a cached host pointer of the current code page,
+//    re-resolved only when the vtlb map changes (nothing to invalidate on code writes,
+//    the words are always read from guest RAM);
+//  - decoding goes through a small cache keyed by the instruction word itself, so it never
+//    needs invalidation;
+//  - event tests run when nextEventCycle is reached, as with the recompilers, instead of
+//    after every branch;
+//  - short polling loops are detected and fast-forwarded to the next event.
+static bool s_fastMode = false;
+
+static u32 s_fetchVPage = 0xFFFFFFFFu;
+static u32 s_fetchGeneration = 0;
+static const u8* s_fetchHost = nullptr;
+
+struct DecodeCacheEntry
+{
+	u32 code;
+	const R5900::OPCODE* opcode;
+};
+static constexpr u32 DECODE_CACHE_BITS = 16;
+static DecodeCacheEntry s_decodeCache[1u << DECODE_CACHE_BITS];
+
+static __fi const R5900::OPCODE& DecodeCached(u32 code)
+{
+	DecodeCacheEntry& e = s_decodeCache[(code * 0x9E3779B1u) >> (32 - DECODE_CACHE_BITS)];
+	if (e.opcode && e.code == code) [[likely]]
+		return *e.opcode;
+
+	const R5900::OPCODE& op = R5900::GetInstruction(code);
+	e.code = code;
+	e.opcode = &op;
+	return op;
+}
+
+static __fi u32 FetchFast(u32 pc)
+{
+	if ((pc >> 12) == s_fetchVPage && s_fetchGeneration == vtlb_MapGeneration) [[likely]]
+		return *reinterpret_cast<const u32*>(s_fetchHost + (pc & 0xFFF));
+
+	// Goes through the vtlb, so TLB misses and address errors are raised as usual.
+	const u32 code = memRead32(pc);
+
+	if (const u8* host = vtlb_GetExecPage(pc))
+	{
+		s_fetchVPage = pc >> 12;
+		s_fetchGeneration = vtlb_MapGeneration;
+		s_fetchHost = host;
+	}
+	else
+	{
+		s_fetchVPage = 0xFFFFFFFFu;
+	}
+	return code;
+}
+
+static void FlushFastModeCaches()
+{
+	s_fetchVPage = 0xFFFFFFFFu;
+	std::memset(s_decodeCache, 0, sizeof(s_decodeCache));
+}
+
+// A loop that only re-reads memory and recomputes the same values each iteration can't
+// make progress until something outside the EE (an interrupt, DMA, the IOP, a timer)
+// changes what it reads, so the cycles until the next event can be skipped.
+// Every register the loop reads must either be written earlier in the same iteration or
+// never be written by the loop; otherwise it carries state (a delay counter) and the loop
+// has to run for real.
+static bool IsWaitLoop(u32 start, u32 end)
+{
+	static constexpr u32 MAX_INSNS = 10;
+	u32 reads[MAX_INSNS], writes[MAX_INSNS];
+	u32 count = 0;
+
+	for (u32 a = start; a < end; a += 4)
+	{
+		if (count == MAX_INSNS)
+			return false;
+		const u8* host = vtlb_GetExecPage(a);
+		if (!host)
+			return false;
+
+		const u32 code = *reinterpret_cast<const u32*>(host + (a & 0xFFF));
+		const u32 op = code >> 26, rs = (code >> 21) & 31, rt = (code >> 16) & 31, rd = (code >> 11) & 31;
+		u32 r = 0, w = 0;
+		switch (op)
+		{
+			case 0: // SPECIAL
+				switch (code & 63)
+				{
+					case 0: case 2: case 3: // SLL SRL SRA
+						r = 1u << rt; w = 1u << rd; break;
+					case 15: // SYNC
+						break;
+					case 33: case 35: case 36: case 37: case 38: case 39: case 42: case 43: // ADDU SUBU AND OR XOR NOR SLT SLTU
+						r = (1u << rs) | (1u << rt); w = 1u << rd; break;
+					default:
+						return false;
+				}
+				break;
+			case 1: // REGIMM
+				if (rt > 3) // only BLTZ BGEZ BLTZL BGEZL
+					return false;
+				r = 1u << rs;
+				break;
+			case 4: case 5: case 20: case 21: // BEQ BNE BEQL BNEL
+				r = (1u << rs) | (1u << rt); break;
+			case 6: case 7: case 22: case 23: // BLEZ BGTZ BLEZL BGTZL
+				r = 1u << rs; break;
+			case 9: case 10: case 11: case 12: case 13: case 14: // ADDIU SLTI SLTIU ANDI ORI XORI
+			case 32: case 33: case 35: case 36: case 37: case 39: case 55: // LB LH LW LBU LHU LWU LD
+				r = 1u << rs; w = 1u << rt; break;
+			case 15: // LUI
+				w = 1u << rt; break;
+			default:
+				return false;
+		}
+		reads[count] = r & ~1u;
+		writes[count] = w & ~1u;
+		count++;
+	}
+
+	u32 loopWrites = 0;
+	for (u32 i = 0; i < count; i++)
+		loopWrites |= writes[i];
+
+	u32 written = 0;
+	for (u32 i = 0; i < count; i++)
+	{
+		if (reads[i] & ~written & loopWrites)
+			return false;
+		written |= writes[i];
+	}
+	return true;
+}
+
 static void execI()
 {
 	// execI is called for every instruction so it must remains as light as possible.
@@ -180,9 +320,9 @@ static void execI()
 	cpuRegs.pc += 4;
 
 	// interprete instruction
-	cpuRegs.code = memRead32( pc );
+	cpuRegs.code = s_fastMode ? FetchFast(pc) : memRead32(pc);
 
-	const OPCODE& opcode = GetCurrentInstruction();
+	const OPCODE& opcode = s_fastMode ? DecodeCached(cpuRegs.code) : GetCurrentInstruction();
 #if 0
 	static long int runs = 0;
 	//use this to find out what opcodes your game uses. very slow! (rama)
@@ -234,7 +374,17 @@ static __fi void _doBranch_shared(u32 tar)
 	{
 		if (Cpu == &intCpu)
 		{
-			if (intLastBranchTo == tar && EmuConfig.Speedhacks.WaitLoop)
+			if (s_fastMode)
+			{
+				if (intLastBranchTo == tar && EmuConfig.Speedhacks.WaitLoop && tar < cpuRegs.pc &&
+					(cpuRegs.pc - tar) <= (4 * 10) && IsWaitLoop(tar, cpuRegs.pc))
+				{
+					intUpdateCPUCycles();
+					if (static_cast<s64>(cpuRegs.nextEventCycle - cpuRegs.cycle) > 0)
+						cpuRegs.cycle = cpuRegs.nextEventCycle;
+				}
+			}
+			else if (intLastBranchTo == tar && EmuConfig.Speedhacks.WaitLoop)
 			{
 				intUpdateCPUCycles();
 				bool can_skip = true;
@@ -270,11 +420,17 @@ static __fi void _doBranch_shared(u32 tar)
 	}
 }
 
+static __fi bool intEventTestDue()
+{
+	return !s_fastMode || static_cast<s64>(cpuRegs.cycle - cpuRegs.nextEventCycle) >= 0;
+}
+
 static void doBranch( u32 target )
 {
 	_doBranch_shared( target );
 	intUpdateCPUCycles();
-	intEventTest();
+	if (intEventTestDue())
+		intEventTest();
 }
 
 void intDoBranch(u32 target)
@@ -285,7 +441,8 @@ void intDoBranch(u32 target)
 	if( Cpu == &intCpu )
 	{
 		intUpdateCPUCycles();
-		intEventTest();
+		if (intEventTestDue())
+			intEventTest();
 	}
 }
 
@@ -557,6 +714,12 @@ static void intReset()
 {
 	cpuRegs.branch = 0;
 	branch2 = 0;
+
+#ifndef _M_X86
+	// No EE recompiler on this host: "recompiler" selects the fast interpreter.
+	s_fastMode = CHECK_EEREC;
+#endif
+	FlushFastModeCaches();
 }
 
 void intEventTest()

@@ -76,6 +76,8 @@ extern void vtlb_EnableGuestMmu();
 extern void vtlb_DisableGuestMmu();
 extern void vtlb_SetExecPAddr(u32 vaddr, u32 paddr, u32 size);
 extern bool vtlb_LookupExecPAddr(u32 vaddr, u32* out_paddr);
+extern const u8* vtlb_GetExecPage(u32 vaddr);
+extern u32 vtlb_MapGeneration;
 extern bool vtlb_ResolveFastmemMapping(uptr* addr);
 extern bool vtlb_GetGuestAddress(uptr host_addr, u32* guest_addr);
 extern void vtlb_UpdateFastmemProtection(u32 paddr, u32 size, PageProtectionMode prot);

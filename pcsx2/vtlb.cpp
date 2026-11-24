@@ -60,6 +60,10 @@ static vtlbHandler UnmappedPhyHandler;
 // when guest-managed MMU mode is active; nullptr otherwise.
 static u32* s_execPAddr = nullptr;
 
+// Bumped on every change to the virtual or physical map, so callers can cache
+// translations (the interpreter's instruction fetch) and drop them cheaply.
+u32 vtlb_MapGeneration = 0;
+
 struct FastmemVirtualMapping
 {
 	u32 offset;
@@ -831,6 +835,7 @@ __ri vtlbHandler vtlb_RegisterHandler(vtlbMemR8FP* r8, vtlbMemR16FP* r16, vtlbMe
 // The memory region start and size parameters must be pagesize aligned.
 void vtlb_MapHandler(vtlbHandler handler, u32 start, u32 size)
 {
+	vtlb_MapGeneration++;
 	verify(0 == (start & VTLB_PAGE_MASK));
 	verify(0 == (size & VTLB_PAGE_MASK) && size > 0);
 
@@ -846,6 +851,7 @@ void vtlb_MapHandler(vtlbHandler handler, u32 start, u32 size)
 
 void vtlb_MapBlock(void* base, u32 start, u32 size, u32 blocksize)
 {
+	vtlb_MapGeneration++;
 	verify(0 == (start & VTLB_PAGE_MASK));
 	verify(0 == (size & VTLB_PAGE_MASK) && size > 0);
 	if (!blocksize)
@@ -1242,6 +1248,7 @@ bool vtlb_IsFaultingPC(u32 guest_pc)
 
 void vtlb_EnableGuestMmu()
 {
+	vtlb_MapGeneration++;
 	if (!s_execPAddr)
 		s_execPAddr = new u32[VTLB_VMAP_ITEMS];
 
@@ -1251,12 +1258,14 @@ void vtlb_EnableGuestMmu()
 
 void vtlb_DisableGuestMmu()
 {
+	vtlb_MapGeneration++;
 	delete[] s_execPAddr;
 	s_execPAddr = nullptr;
 }
 
 void vtlb_SetExecPAddr(u32 vaddr, u32 paddr, u32 size)
 {
+	vtlb_MapGeneration++;
 	if (!s_execPAddr)
 		return;
 
@@ -1286,10 +1295,32 @@ bool vtlb_LookupExecPAddr(u32 vaddr, u32* out_paddr)
 	return true;
 }
 
+// Host pointer to the start of the page that holds vaddr, for instruction fetch.
+// Pages the guest mapped read-only go through a handler for data accesses, but
+// their code still lives in main RAM. Returns nullptr when the page is not plain
+// memory (hardware, unmapped, or a handler without a RAM backing).
+const u8* vtlb_GetExecPage(u32 vaddr)
+{
+	u32 paddr;
+	if (vtlb_LookupExecPAddr(vaddr, &paddr))
+	{
+		paddr &= ~VTLB_PAGE_MASK;
+		if (eeMem && paddr + VTLB_PAGE_SIZE <= Ps2MemSize::ExposedRam)
+			return &eeMem->Main[paddr];
+	}
+
+	const VTLBVirtual vmv = vtlbdata.vmap[vaddr >> VTLB_PAGE_BITS];
+	if (vmv.isHandler(vaddr))
+		return nullptr;
+
+	return reinterpret_cast<const u8*>(vmv.assumePtr(vaddr & ~VTLB_PAGE_MASK));
+}
+
 //virtual mappings
 //TODO: Add invalid paddr checks
 void vtlb_VMap(u32 vaddr, u32 paddr, u32 size)
 {
+	vtlb_MapGeneration++;
 	verify(0 == (vaddr & VTLB_PAGE_MASK));
 	verify(0 == (paddr & VTLB_PAGE_MASK));
 	verify(0 == (size & VTLB_PAGE_MASK) && size > 0);
@@ -1336,6 +1367,7 @@ void vtlb_VMap(u32 vaddr, u32 paddr, u32 size)
 
 void vtlb_VMapBuffer(u32 vaddr, void* buffer, u32 size)
 {
+	vtlb_MapGeneration++;
 	verify(0 == (vaddr & VTLB_PAGE_MASK));
 	verify(0 == (size & VTLB_PAGE_MASK) && size > 0);
 
@@ -1369,6 +1401,7 @@ void vtlb_VMapBuffer(u32 vaddr, void* buffer, u32 size)
 
 void vtlb_VMapWriteProtected(u32 vaddr, u32 paddr, u32 size)
 {
+	vtlb_MapGeneration++;
 	verify(0 == (vaddr & VTLB_PAGE_MASK));
 	verify(0 == (paddr & VTLB_PAGE_MASK));
 	verify(0 == (size & VTLB_PAGE_MASK) && size > 0);
@@ -1391,6 +1424,7 @@ void vtlb_VMapWriteProtected(u32 vaddr, u32 paddr, u32 size)
 
 void vtlb_VMapUnmap(u32 vaddr, u32 size)
 {
+	vtlb_MapGeneration++;
 	verify(0 == (vaddr & VTLB_PAGE_MASK));
 	verify(0 == (size & VTLB_PAGE_MASK) && size > 0);
 
@@ -1448,6 +1482,7 @@ void vtlb_Init()
 // This function should probably be part of the COP0 rather than here in VTLB.
 void vtlb_Reset()
 {
+	vtlb_MapGeneration++;
 	vtlb_RemoveFastmemMappings();
 	for (int i = 0; i < 48; i++)
 		UnmapTLB(tlb[i], i);
